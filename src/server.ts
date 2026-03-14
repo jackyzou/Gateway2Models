@@ -4,6 +4,26 @@ import { listModels, route } from "./router.js";
 import { handleNonStreaming, handleStreaming } from "./streaming.js";
 import { ChatCompletionRequestSchema, extractTextContent } from "./types.js";
 import {
+  attributeSession,
+  appendMessage,
+  getMessages,
+  getSession as getContextSession,
+  updateSession as updateContextSession,
+  listContextSessions,
+  compressSessionIfNeeded,
+  saveMemory,
+  listMemories,
+  type ContextSession,
+} from "./context-manager.js";
+import {
+  storeFile,
+  getFileData,
+  getFileMeta,
+  listStoredFiles,
+  deleteStoredFile,
+  getStorageStats,
+} from "./file-storage.js";
+import {
   readFileContent,
   listDirectory,
   globFiles,
@@ -661,6 +681,198 @@ app.put("/v1/lan/policy", async (req, res) => {
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+// ── Context Sessions (OpenViking-inspired) ───────────────────────────
+
+app.post("/v1/context/sessions", async (req, res) => {
+  try {
+    const session = await attributeSession({
+      agentId: req.body.agentId,
+      sessionId: req.body.sessionId,
+      deviceIp: req.ip ?? req.socket.remoteAddress,
+      userAgent: req.headers["user-agent"] ?? "",
+    });
+    res.json(session);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.get("/v1/context/sessions", async (req, res) => {
+  const sessions = await listContextSessions({
+    ownerId: req.query.ownerId as string | undefined,
+    ownerType: req.query.ownerType as "device" | "agent" | undefined,
+    state: req.query.state as "active" | "archived" | undefined,
+    limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
+  });
+  res.json({ sessions });
+});
+
+app.get("/v1/context/sessions/:id", async (req, res) => {
+  const session = await getContextSession(req.params.id);
+  if (!session) { res.status(404).json({ error: { message: "Session not found" } }); return; }
+  const messages = await getMessages(req.params.id, 50);
+  res.json({ session, messages });
+});
+
+app.put("/v1/context/sessions/:id", async (req, res) => {
+  const session = await updateContextSession(req.params.id, req.body);
+  if (!session) { res.status(404).json({ error: { message: "Session not found" } }); return; }
+  res.json(session);
+});
+
+app.post("/v1/context/sessions/:id/messages", async (req, res) => {
+  try {
+    const msg = await appendMessage(req.params.id, {
+      role: req.body.role ?? "user",
+      content: req.body.content,
+      model: req.body.model,
+      contextRefs: req.body.contextRefs,
+    });
+    await compressSessionIfNeeded(req.params.id);
+    res.json(msg);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+// ── Memories ─────────────────────────────────────────────────────────
+
+app.post("/v1/memories", async (req, res) => {
+  try {
+    const entry = await saveMemory({
+      category: req.body.category,
+      scope: req.body.scope ?? "user",
+      content: req.body.content,
+      sourceSessionId: req.body.sessionId,
+    });
+    res.json(entry);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.get("/v1/memories", async (req, res) => {
+  const scope = (req.query.scope as "user" | "agent") ?? "user";
+  const category = req.query.category as string | undefined;
+  const entries = await listMemories(scope, category);
+  res.json({ memories: entries });
+});
+
+// ── File Storage ─────────────────────────────────────────────────────
+
+app.post("/v1/storage", async (req, res) => {
+  if (!req.body.data || !req.body.filename) {
+    res.status(400).json({ error: { message: "Missing data (base64) or filename" } });
+    return;
+  }
+  try {
+    const file = await storeFile({
+      data: req.body.data,
+      filename: req.body.filename,
+      mimeType: req.body.mimeType,
+      source: req.body.source ?? "upload",
+      sessionId: req.body.sessionId,
+      prompt: req.body.prompt,
+    });
+    res.json(file);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.get("/v1/storage", async (req, res) => {
+  const files = await listStoredFiles({
+    category: req.query.category as "image" | "audio" | "video" | "document" | "other" | undefined,
+    sessionId: req.query.sessionId as string | undefined,
+    limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
+  });
+  res.json({ files });
+});
+
+app.get("/v1/storage/stats", async (_req, res) => {
+  res.json(await getStorageStats());
+});
+
+app.get("/v1/storage/:id", async (req, res) => {
+  const result = await getFileData(req.params.id);
+  if (!result) { res.status(404).json({ error: { message: "File not found" } }); return; }
+  res.setHeader("Content-Type", result.meta.mimeType);
+  res.setHeader("Content-Disposition", `inline; filename="${result.meta.filename}"`);
+  res.send(result.buffer);
+});
+
+app.get("/v1/storage/:id/meta", async (req, res) => {
+  const meta = await getFileMeta(req.params.id);
+  if (!meta) { res.status(404).json({ error: { message: "File not found" } }); return; }
+  res.json(meta);
+});
+
+app.delete("/v1/storage/:id", async (req, res) => {
+  const ok = await deleteStoredFile(req.params.id);
+  if (!ok) { res.status(404).json({ error: { message: "File not found" } }); return; }
+  res.json({ status: "deleted" });
+});
+
+// ── TTS (Fish Speech) ───────────────────────────────────────────────
+
+const FISH_SPEECH_URL = process.env.FISH_SPEECH_URL ?? "http://localhost:8080";
+
+app.post("/v1/audio/speech", async (req, res) => {
+  const { text, voice, speed } = req.body as { text?: string; voice?: string; speed?: number };
+  if (!text) {
+    res.status(400).json({ error: { message: "Missing text field" } });
+    return;
+  }
+
+  try {
+    const ttsRes = await fetch(`${FISH_SPEECH_URL}/v1/tts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice: voice ?? "default", speed: speed ?? 1.0 }),
+      signal: AbortSignal.timeout(60000),
+    });
+
+    if (!ttsRes.ok) {
+      // Fallback: try OpenAI-compatible endpoint
+      const openaiRes = await fetch(`${FISH_SPEECH_URL}/v1/audio/speech`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "tts-1", input: text, voice: voice ?? "alloy", speed: speed ?? 1.0 }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!openaiRes.ok) throw new Error(`TTS failed: ${ttsRes.status}`);
+
+      const audioBuffer = Buffer.from(await openaiRes.arrayBuffer());
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.send(audioBuffer);
+      return;
+    }
+
+    const audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
+
+    // Auto-store the generated audio
+    const { storeBuffer } = await import("./file-storage.js");
+    await storeBuffer({
+      buffer: audioBuffer,
+      filename: `tts_${Date.now()}.mp3`,
+      mimeType: "audio/mpeg",
+      source: "tts",
+      prompt: text,
+    });
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(audioBuffer);
+  } catch (err) {
+    res.status(500).json({
+      error: {
+        message: err instanceof Error ? err.message : String(err),
+        hint: "Ensure Fish Speech is running at " + FISH_SPEECH_URL,
+      },
+    });
   }
 });
 
