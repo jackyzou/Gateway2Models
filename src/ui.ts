@@ -1,321 +1,452 @@
-/** Inline HTML for the web UI — no external dependencies */
+/** Inline HTML for the web UI — mobile-friendly, multi-modal input */
 export const UI_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gateway2Models</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>G2M</title>
 <style>
   :root { --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-  .container { max-width: 960px; margin: 0 auto; padding: 24px; }
-  h1 { font-size: 24px; margin-bottom: 4px; }
-  .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 14px; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; }
-  .badge-green { background: #238636; color: #fff; }
-  .badge-blue { background: #1f6feb; color: #fff; }
-  .badge-yellow { background: #9e6a03; color: #fff; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; min-height: 100dvh; }
+  .container { max-width: 960px; margin: 0 auto; padding: 12px; }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  .subtitle { color: var(--muted); margin-bottom: 16px; font-size: 12px; }
 
-  /* Tabs */
-  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
-  .tab { padding: 10px 20px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-size: 14px; transition: all 0.15s; }
-  .tab:hover { color: var(--text); }
+  /* Status cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .card-label { font-size: 10px; color: var(--muted); }
+  .card-value { font-size: 16px; font-weight: 600; }
+
+  /* Tabs — horizontal scroll on mobile */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { padding: 8px 14px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-size: 13px; white-space: nowrap; flex-shrink: 0; transition: all 0.15s; -webkit-tap-highlight-color: transparent; }
+  .tab:hover, .tab:active { color: var(--text); }
   .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
   .panel { display: none; }
   .panel.active { display: block; }
 
   /* Chat */
-  .chat-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; min-height: 300px; max-height: 500px; overflow-y: auto; margin-bottom: 12px; }
-  .msg { margin-bottom: 12px; padding: 8px 12px; border-radius: 6px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .chat-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-height: 40vh; max-height: 55vh; overflow-y: auto; margin-bottom: 8px; -webkit-overflow-scrolling: touch; }
+  .msg { margin-bottom: 10px; padding: 8px 10px; border-radius: 6px; font-size: 14px; line-height: 1.5; word-break: break-word; }
   .msg-user { background: #1f6feb22; border-left: 3px solid var(--accent); }
   .msg-assistant { background: #23862222; border-left: 3px solid var(--green); }
   .msg-system { background: #9e6a0322; border-left: 3px solid var(--yellow); color: var(--muted); font-size: 12px; }
-  .msg-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .input-row { display: flex; gap: 8px; }
-  .input-row textarea { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 10px; font-size: 14px; font-family: inherit; resize: vertical; min-height: 60px; }
+  .msg-label { font-size: 10px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .msg pre { background: #0d1117; border: 1px solid var(--border); border-radius: 4px; padding: 8px; overflow-x: auto; margin: 6px 0; font-size: 12px; }
+  .msg code { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; }
+  .msg p { margin: 4px 0; }
+  .msg ul, .msg ol { margin: 4px 0 4px 20px; }
+  .msg strong { color: var(--accent); }
+  .msg img { max-width: 100%; border-radius: 6px; margin: 6px 0; }
+  .msg audio, .msg video { max-width: 100%; margin: 6px 0; }
+
+  /* Input area */
+  .input-area { display: flex; flex-direction: column; gap: 6px; }
+  .input-row { display: flex; gap: 6px; align-items: flex-end; }
+  .input-row textarea { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 10px; font-size: 14px; font-family: inherit; resize: none; min-height: 44px; max-height: 120px; }
   .input-row textarea:focus { outline: none; border-color: var(--accent); }
-  button { background: #238636; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.15s; }
+  .input-actions { display: flex; gap: 6px; align-items: center; }
+
+  /* Attachments preview */
+  .attachments { display: flex; gap: 6px; flex-wrap: wrap; }
+  .attachment-item { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .attachment-item img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
+  .attachment-item .remove-btn { cursor: pointer; color: var(--red); font-size: 14px; padding: 2px 4px; }
+
+  button { background: #238636; color: #fff; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 14px; font-weight: 500; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   button:hover { background: #2ea043; }
+  button:active { transform: scale(0.97); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   button.secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
-  button.secondary:hover { background: #21262d; }
+  button.icon-btn { background: var(--surface); border: 1px solid var(--border); padding: 8px 10px; font-size: 16px; line-height: 1; }
 
-  /* Controls row */
-  .controls { display: flex; gap: 12px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
-  .controls select, .controls input { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
-  .controls label { font-size: 13px; color: var(--muted); }
+  /* Controls */
+  .controls { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .controls select { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+  .controls label { font-size: 12px; color: var(--muted); }
 
-  /* Models table */
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  /* File input hidden */
+  .file-input { display: none; }
 
-  /* JSON viewer */
-  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
-  code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; }
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
 
-  /* Status cards */
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-  .card-label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-  .card-value { font-size: 20px; font-weight: 600; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; line-height: 1.4; }
 
-  .loading { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+  .loading { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Mobile responsive */
+  @media (max-width: 600px) {
+    .container { padding: 8px; }
+    h1 { font-size: 18px; }
+    .cards { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .card { padding: 8px; }
+    .card-value { font-size: 14px; }
+    .chat-box { min-height: 35vh; max-height: 50vh; padding: 8px; }
+    .msg { font-size: 13px; padding: 6px 8px; }
+    .controls { gap: 6px; }
+    .controls select { padding: 5px 6px; font-size: 12px; }
+    .tab { padding: 8px 10px; font-size: 12px; }
+    pre { font-size: 11px; padding: 8px; }
+    table { font-size: 12px; }
+    th, td { padding: 6px; }
+  }
+
+  @media (max-width: 400px) {
+    .cards { grid-template-columns: 1fr 1fr; }
+    .controls label { display: none; }
+  }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>⚡ Gateway2Models</h1>
-  <p class="subtitle">Local AI Model Gateway — Agentware for multi-model orchestration</p>
+  <h1>⚡ G2M</h1>
+  <p class="subtitle">Gateway2Models — The Model Gateway for AI Agents</p>
 
-  <div class="cards" id="statusCards">
-    <div class="card"><div class="card-label">Status</div><div class="card-value" id="statusVal">Loading...</div></div>
-    <div class="card"><div class="card-label">Active Requests</div><div class="card-value" id="activeVal">—</div></div>
-    <div class="card"><div class="card-label">Models Available</div><div class="card-value" id="modelsVal">—</div></div>
-    <div class="card"><div class="card-label">Sessions Run</div><div class="card-value" id="sessionsVal">—</div></div>
+  <div class="cards">
+    <div class="card"><div class="card-label">Status</div><div class="card-value" id="statusVal">...</div></div>
+    <div class="card"><div class="card-label">Active</div><div class="card-value" id="activeVal">—</div></div>
+    <div class="card"><div class="card-label">Models</div><div class="card-value" id="modelsVal">—</div></div>
+    <div class="card"><div class="card-label">Sessions</div><div class="card-value" id="sessionsVal">—</div></div>
   </div>
 
   <div class="tabs">
-    <div class="tab active" data-tab="chat">Chat</div>
-    <div class="tab" data-tab="context">File Context</div>
-    <div class="tab" data-tab="parallel">Parallel Sessions</div>
-    <div class="tab" data-tab="models">Models</div>
-    <div class="tab" data-tab="api">API Reference</div>
+    <div class="tab active" data-tab="chat">💬 Chat</div>
+    <div class="tab" data-tab="context">📁 Context</div>
+    <div class="tab" data-tab="parallel">⚡ Parallel</div>
+    <div class="tab" data-tab="models">🤖 Models</div>
+    <div class="tab" data-tab="api">📖 API</div>
   </div>
 
-  <!-- Chat panel -->
+  <!-- Chat -->
   <div class="panel active" id="panel-chat">
     <div class="controls">
-      <label>Model:</label>
-      <select id="modelSelect"><option value="auto">auto</option><option value="vscode-claude">vscode-claude</option><option value="agency-claude">agency-claude</option><option value="agency-copilot">agency-copilot</option></select>
-      <label>Stream:</label>
-      <input type="checkbox" id="streamCheck" checked>
-      <label>Effort:</label>
-      <select id="effortSelect"><option value="">auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select>
-      <button class="secondary" onclick="clearChat()">Clear</button>
+      <select id="modelSelect">
+        <option value="auto">auto</option>
+        <option value="vscode-claude">vscode-claude</option>
+        <option value="agency-claude">agency-claude</option>
+        <option value="agency-copilot">agency-copilot</option>
+        <option value="ollama">ollama</option>
+      </select>
+      <label>Stream</label><input type="checkbox" id="streamCheck" checked>
+      <select id="effortSelect"><option value="">effort: auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select>
+      <button class="secondary" onclick="clearChat()" style="margin-left:auto">Clear</button>
     </div>
     <div class="chat-box" id="chatBox"></div>
-    <div class="input-row">
-      <textarea id="promptInput" placeholder="Type your message..." rows="2"></textarea>
-      <button id="sendBtn" onclick="sendMessage()">Send</button>
+    <div class="attachments" id="attachments"></div>
+    <div class="input-area">
+      <div class="input-row">
+        <input type="file" id="fileInput" class="file-input" accept="image/*,audio/*,video/*" multiple>
+        <button class="icon-btn" onclick="document.getElementById('fileInput').click()" title="Attach image, audio, or video">📎</button>
+        <textarea id="promptInput" placeholder="Type a message..." rows="1"></textarea>
+        <button id="sendBtn" onclick="sendMessage()">Send</button>
+      </div>
     </div>
   </div>
 
-  <!-- File context panel -->
+  <!-- Context -->
   <div class="panel" id="panel-context">
     <div class="controls">
-      <label>Path:</label>
-      <input type="text" id="ctxPath" style="flex:1;min-width:300px" placeholder="C:\\Users\\...\\project">
-      <button onclick="listDir()">List Dir</button>
-      <button onclick="readCtxFile()">Read File</button>
+      <input type="text" id="ctxPath" style="flex:1;min-width:0" placeholder="Enter path...">
+      <button onclick="listDir()">List</button>
+      <button onclick="readCtxFile()">Read</button>
     </div>
-    <pre id="ctxOutput" style="margin-top:12px;min-height:200px"><code>Results will appear here...</code></pre>
+    <pre id="ctxOutput" style="margin-top:8px;min-height:200px;max-height:60vh;overflow:auto"><code>Results appear here...</code></pre>
   </div>
 
-  <!-- Parallel sessions panel -->
+  <!-- Parallel -->
   <div class="panel" id="panel-parallel">
-    <p style="color:var(--muted);margin-bottom:12px;font-size:14px">Run multiple model requests in parallel. Define tasks as JSON.</p>
-    <textarea id="parallelInput" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:12px;font-family:monospace;font-size:13px;min-height:150px;margin-bottom:12px">{
+    <p style="color:var(--muted);margin-bottom:8px;font-size:13px">Run multiple models in parallel:</p>
+    <textarea id="parallelInput" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:10px;font-family:monospace;font-size:12px;min-height:120px;margin-bottom:8px">{
   "tasks": [
     { "model": "vscode-claude", "messages": [{"role":"user","content":"What is TypeScript?"}] },
-    { "model": "agency-claude", "messages": [{"role":"user","content":"What is Rust?"}] }
+    { "model": "ollama", "messages": [{"role":"user","content":"What is Rust?"}] }
   ],
   "concurrency": 2
 }</textarea>
-    <button onclick="runParallel()">Run Parallel</button>
-    <pre id="parallelOutput" style="margin-top:12px;min-height:100px"><code>Results will appear here...</code></pre>
+    <button onclick="runParallel()">Run</button>
+    <pre id="parallelOutput" style="margin-top:8px;min-height:80px;max-height:50vh;overflow:auto"><code></code></pre>
   </div>
 
-  <!-- Models panel -->
+  <!-- Models -->
   <div class="panel" id="panel-models">
-    <table id="modelsTable"><thead><tr><th>Model ID</th><th>Backend</th><th>Description</th></tr></thead><tbody></tbody></table>
+    <div style="overflow-x:auto"><table id="modelsTable"><thead><tr><th>ID</th><th>Backend</th><th>Description</th></tr></thead><tbody></tbody></table></div>
   </div>
 
-  <!-- API Reference panel -->
+  <!-- API -->
   <div class="panel" id="panel-api">
-    <h2 style="margin-bottom:16px;font-size:18px">Agent Usage Guide</h2>
-    <pre><code>## Base URL: http://127.0.0.1:5555
+    <pre style="max-height:70vh;overflow:auto"><code>Base URL: http://&lt;host&gt;:5555
 
-## Chat Completions (OpenAI-compatible)
+── Chat (OpenAI-compatible) ──
 POST /v1/chat/completions
-{
-  "model": "auto",           // auto | vscode-claude | agency-claude | agency-copilot
-  "messages": [{"role": "user", "content": "Hello"}],
-  "stream": true,            // SSE streaming
-  "x-effort": "high"         // optional: low | medium | high | max
-}
+  model: auto | vscode-claude | agency-claude | agency-copilot | ollama
+  messages: [{role, content}]  (content can be string or ContentPart[])
+  stream: true/false
+  x-effort: low | medium | high | max
 
-## Load File Context (read files from any directory)
-POST /v1/context/read
-{ "path": "C:\\\\path\\\\to\\\\file.ts", "startLine": 1, "endLine": 50 }
+── Multi-modal (images/audio in messages) ──
+content: [
+  {"type":"text","text":"Describe this image"},
+  {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}
+]
 
-POST /v1/context/list
-{ "path": "C:\\\\path\\\\to\\\\project", "recursive": true, "maxDepth": 3 }
+── Generation ──
+POST /v1/images/generations   {prompt, size, n}
+POST /v1/audio/speech         {text, voice, speed}
+POST /v1/audio/transcriptions {audio (base64), model}
+POST /v1/video/generations    {prompt, duration}  → async job
+GET  /v1/video/generations/:id
 
-POST /v1/context/glob
-{ "directory": "C:\\\\path\\\\to\\\\project", "extensions": [".ts", ".js"] }
+── Context ──
+POST /v1/context/read      {path, startLine, endLine}
+POST /v1/context/list      {path, recursive, maxDepth}
+POST /v1/context/load      {paths[], maxTotalSize}
+POST /v1/context/discover  {path}
+POST /v1/context/git-diff  {path, commits}
 
-POST /v1/context/load
-{ "paths": ["C:\\\\project1\\\\src", "C:\\\\project2\\\\main.py"], "maxTotalSize": 500000 }
+── Sessions ──
+POST /v1/context/sessions          auto-attribute
+GET  /v1/context/sessions
+GET  /v1/context/sessions/:id
+POST /v1/context/sessions/:id/messages
 
-## Parallel Sessions (multiple model requests simultaneously)
-POST /v1/sessions/parallel
-{
-  "tasks": [
-    { "model": "vscode-claude", "messages": [{"role":"user","content":"Q1"}] },
-    { "model": "agency-claude", "messages": [{"role":"user","content":"Q2"}] }
-  ],
-  "concurrency": 3
-}
+── Agents ──
+POST /v1/agents/intake     register agent
+POST /v1/agents/chat       thread-aware chat
+GET  /v1/agents
 
-GET /v1/sessions           — list all sessions
-GET /v1/sessions/:id       — get session details
+── Storage ──
+POST /v1/storage           {data (base64), filename}
+GET  /v1/storage
+GET  /v1/storage/:id       file content
+GET  /v1/storage/stats
 
-## Models
-GET /v1/models             — list available models
-
-## Health
-GET /health                — server status
+── Tools/Router ──
+POST /v1/tools             register tool
+GET  /v1/tools
+GET  /v1/router/stats      analytics
+GET  /v1/router/policy
+GET  /v1/cache/stats
+GET  /v1/lan/policy
 </code></pre>
   </div>
 </div>
 
 <script>
-  // Tabs
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      tab.classList.add('active');
-      document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
-    });
+// Tabs
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
   });
+});
 
-  // Status polling
-  async function refreshStatus() {
-    try {
-      const h = await fetch('/health').then(r => r.json());
-      document.getElementById('statusVal').textContent = h.status === 'ok' ? '🟢 Online' : '🔴 Error';
-      document.getElementById('activeVal').textContent = h.activeRequests + ' / ' + h.maxConcurrency;
-      const m = await fetch('/v1/models').then(r => r.json());
-      document.getElementById('modelsVal').textContent = m.data.length;
-      // Models table
-      const tbody = document.querySelector('#modelsTable tbody');
-      tbody.innerHTML = m.data.map(d => '<tr><td><code>' + d.id + '</code></td><td><span class="badge badge-blue">' + d.meta.backend + '</span></td><td>' + (d.meta.description||'') + '</td></tr>').join('');
-      const s = await fetch('/v1/sessions').then(r => r.json());
-      document.getElementById('sessionsVal').textContent = s.sessions.length;
-    } catch(e) { document.getElementById('statusVal').textContent = '🔴 Offline'; }
+// Auto-resize textarea
+const promptInput = document.getElementById('promptInput');
+promptInput.addEventListener('input', () => {
+  promptInput.style.height = 'auto';
+  promptInput.style.height = Math.min(promptInput.scrollHeight, 120) + 'px';
+});
+
+// Status
+async function refreshStatus() {
+  try {
+    const h = await fetch('/health').then(r => r.json());
+    document.getElementById('statusVal').textContent = h.status === 'ok' ? '🟢' : '🔴';
+    document.getElementById('activeVal').textContent = h.activeRequests + '/' + h.maxConcurrency;
+    const m = await fetch('/v1/models').then(r => r.json());
+    document.getElementById('modelsVal').textContent = m.data.length;
+    const tbody = document.querySelector('#modelsTable tbody');
+    tbody.innerHTML = m.data.map(d => '<tr><td><code>' + d.id + '</code></td><td>' + d.meta.backend + '</td><td style="color:var(--muted)">' + (d.meta.description||'') + '</td></tr>').join('');
+    try { const s = await fetch('/v1/sessions').then(r => r.json()); document.getElementById('sessionsVal').textContent = s.sessions.length; } catch {}
+  } catch { document.getElementById('statusVal').textContent = '🔴'; }
+}
+refreshStatus(); setInterval(refreshStatus, 8000);
+
+// Attachments
+const pendingFiles = [];
+const fileInput = document.getElementById('fileInput');
+const attachmentsDiv = document.getElementById('attachments');
+
+fileInput.addEventListener('change', () => {
+  for (const file of fileInput.files) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      const dataUrl = reader.result;
+      pendingFiles.push({ name: file.name, type: file.type, base64, dataUrl });
+      renderAttachments();
+    };
+    reader.readAsDataURL(file);
   }
-  refreshStatus(); setInterval(refreshStatus, 5000);
+  fileInput.value = '';
+});
 
-  // Chat
-  const chatBox = document.getElementById('chatBox');
-  const chatHistory = [];
+function renderAttachments() {
+  attachmentsDiv.innerHTML = pendingFiles.map((f, i) => {
+    let preview = '';
+    if (f.type.startsWith('image/')) preview = '<img src="' + f.dataUrl + '">';
+    else if (f.type.startsWith('audio/')) preview = '🎵';
+    else if (f.type.startsWith('video/')) preview = '🎬';
+    return '<div class="attachment-item">' + preview + '<span>' + f.name.slice(0,20) + '</span><span class="remove-btn" onclick="removeAttachment(' + i + ')">✕</span></div>';
+  }).join('');
+}
 
-  function addMsg(role, content) {
-    const labels = { user: 'You', assistant: 'Assistant', system: 'System' };
+function removeAttachment(i) { pendingFiles.splice(i, 1); renderAttachments(); }
+
+// Markdown rendering (basic)
+function renderMd(text) {
+  let h = escapeHtml(text);
+  // Code blocks
+  h = h.replace(/\`\`\`(\\w*?)\\n([\\s\\S]*?)\`\`\`/g, '<pre><code>$2</code></pre>');
+  h = h.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
+  // Bold
+  h = h.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
+  // Lists
+  h = h.replace(/^- (.+)$/gm, '<li>$1</li>');
+  h = h.replace(/(<li>.*<\\/li>)/s, '<ul>$1</ul>');
+  // Line breaks
+  h = h.replace(/\\n/g, '<br>');
+  return h;
+}
+
+// Chat
+const chatBox = document.getElementById('chatBox');
+const chatHistory = [];
+
+function addMsg(role, content, isHtml) {
+  const labels = { user: 'You', assistant: 'Assistant', system: 'System' };
+  const div = document.createElement('div');
+  div.className = 'msg msg-' + role;
+  const inner = isHtml ? content : (role === 'assistant' ? renderMd(content) : escapeHtml(content));
+  div.innerHTML = '<div class="msg-label">' + (labels[role]||role) + '</div>' + inner;
+  chatBox.appendChild(div);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function clearChat() { chatBox.innerHTML = ''; chatHistory.length = 0; pendingFiles.length = 0; renderAttachments(); }
+
+async function sendMessage() {
+  const text = promptInput.value.trim();
+  if (!text && pendingFiles.length === 0) return;
+  promptInput.value = '';
+  promptInput.style.height = 'auto';
+
+  // Build content parts (multi-modal)
+  let content;
+  let displayHtml = '';
+
+  if (pendingFiles.length > 0) {
+    content = [];
+    if (text) content.push({ type: 'text', text });
+    for (const f of pendingFiles) {
+      if (f.type.startsWith('image/')) {
+        content.push({ type: 'image_url', image_url: { url: f.dataUrl } });
+        displayHtml += '<img src="' + f.dataUrl + '" style="max-width:200px;border-radius:6px;margin:4px 0">';
+      } else if (f.type.startsWith('audio/')) {
+        content.push({ type: 'input_audio', input_audio: { data: f.base64, format: 'wav' } });
+        displayHtml += '<div>🎵 ' + escapeHtml(f.name) + '</div>';
+      } else {
+        displayHtml += '<div>📎 ' + escapeHtml(f.name) + '</div>';
+      }
+    }
+    if (text) displayHtml = escapeHtml(text) + '<br>' + displayHtml;
+    pendingFiles.length = 0;
+    renderAttachments();
+  } else {
+    content = text;
+    displayHtml = escapeHtml(text);
+  }
+
+  chatHistory.push({ role: 'user', content });
+  addMsg('user', displayHtml, true);
+
+  const model = document.getElementById('modelSelect').value;
+  const stream = document.getElementById('streamCheck').checked;
+  const effort = document.getElementById('effortSelect').value;
+  const body = { model, messages: [...chatHistory], stream };
+  if (effort) body['x-effort'] = effort;
+
+  document.getElementById('sendBtn').disabled = true;
+
+  if (stream) {
     const div = document.createElement('div');
-    div.className = 'msg msg-' + role;
-    div.innerHTML = '<div class="msg-label">' + (labels[role]||role) + '</div>' + escapeHtml(content);
+    div.className = 'msg msg-assistant';
+    div.innerHTML = '<div class="msg-label">Assistant</div><span class="loading"></span>';
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
-  }
-
-  function escapeHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
-
-  function clearChat() { chatBox.innerHTML = ''; chatHistory.length = 0; }
-
-  async function sendMessage() {
-    const input = document.getElementById('promptInput');
-    const text = input.value.trim();
-    if (!text) return;
-    input.value = '';
-
-    chatHistory.push({ role: 'user', content: text });
-    addMsg('user', text);
-
-    const model = document.getElementById('modelSelect').value;
-    const stream = document.getElementById('streamCheck').checked;
-    const effort = document.getElementById('effortSelect').value;
-    const body = { model, messages: [...chatHistory], stream };
-    if (effort) body['x-effort'] = effort;
-
-    document.getElementById('sendBtn').disabled = true;
-
-    if (stream) {
-      const assistantDiv = document.createElement('div');
-      assistantDiv.className = 'msg msg-assistant';
-      assistantDiv.innerHTML = '<div class="msg-label">Assistant</div><span class="loading"></span>';
-      chatBox.appendChild(assistantDiv);
-      chatBox.scrollTop = chatBox.scrollHeight;
-      let fullText = '';
-      try {
-        const res = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          for (const line of chunk.split('\\n')) {
-            if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-              try {
-                const j = JSON.parse(line.slice(6));
-                const c = j.choices?.[0]?.delta?.content;
-                if (c) { fullText += c; assistantDiv.innerHTML = '<div class="msg-label">Assistant</div>' + escapeHtml(fullText); chatBox.scrollTop = chatBox.scrollHeight; }
-              } catch {}
-            }
+    let full = '';
+    try {
+      const res = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (const line of dec.decode(value).split('\\n')) {
+          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+            try { const c = JSON.parse(line.slice(6)).choices?.[0]?.delta?.content; if (c) { full += c; div.innerHTML = '<div class="msg-label">Assistant</div>' + renderMd(full); chatBox.scrollTop = chatBox.scrollHeight; } } catch {}
           }
         }
-      } catch(e) { fullText = '[Error: ' + e.message + ']'; }
-      assistantDiv.innerHTML = '<div class="msg-label">Assistant</div>' + escapeHtml(fullText);
-      chatHistory.push({ role: 'assistant', content: fullText });
-    } else {
-      addMsg('system', 'Processing...');
-      try {
-        const res = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const j = await res.json();
-        chatBox.lastChild.remove(); // remove "Processing..."
-        const content = j.choices?.[0]?.message?.content || j.error?.message || 'No response';
-        addMsg('assistant', content);
-        chatHistory.push({ role: 'assistant', content });
-        if (j['x-routing']) addMsg('system', 'Routing: ' + j['x-routing'].reason + ' (effort: ' + j['x-routing'].effort + ')');
-      } catch(e) { chatBox.lastChild.remove(); addMsg('system', 'Error: ' + e.message); }
-    }
-    document.getElementById('sendBtn').disabled = false;
-  }
-
-  document.getElementById('promptInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  });
-
-  // Context
-  async function listDir() {
-    const path = document.getElementById('ctxPath').value;
+      }
+    } catch(e) { full = '[Error: ' + e.message + ']'; }
+    div.innerHTML = '<div class="msg-label">Assistant</div>' + renderMd(full);
+    chatHistory.push({ role: 'assistant', content: full });
+  } else {
+    addMsg('system', 'Processing...');
     try {
-      const r = await fetch('/v1/context/list', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path, recursive: true, maxDepth: 2}) });
-      document.getElementById('ctxOutput').querySelector('code').textContent = JSON.stringify(await r.json(), null, 2);
-    } catch(e) { document.getElementById('ctxOutput').querySelector('code').textContent = 'Error: ' + e.message; }
+      const res = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await res.json();
+      chatBox.lastChild.remove();
+      const c = j.choices?.[0]?.message?.content || j.error?.message || 'No response';
+      addMsg('assistant', c);
+      chatHistory.push({ role: 'assistant', content: c });
+      if (j['x-routing']) addMsg('system', j['x-routing'].reason + ' (effort: ' + j['x-routing'].effort + ')');
+    } catch(e) { chatBox.lastChild.remove(); addMsg('system', 'Error: ' + e.message); }
   }
-  async function readCtxFile() {
-    const path = document.getElementById('ctxPath').value;
-    try {
-      const r = await fetch('/v1/context/read', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
-      document.getElementById('ctxOutput').querySelector('code').textContent = JSON.stringify(await r.json(), null, 2);
-    } catch(e) { document.getElementById('ctxOutput').querySelector('code').textContent = 'Error: ' + e.message; }
-  }
+  document.getElementById('sendBtn').disabled = false;
+}
 
-  // Parallel
-  async function runParallel() {
-    try {
-      const body = JSON.parse(document.getElementById('parallelInput').value);
-      const r = await fetch('/v1/sessions/parallel', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      document.getElementById('parallelOutput').querySelector('code').textContent = JSON.stringify(await r.json(), null, 2);
-      refreshStatus();
-    } catch(e) { document.getElementById('parallelOutput').querySelector('code').textContent = 'Error: ' + e.message; }
-  }
+promptInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+// Context
+async function listDir() {
+  const path = document.getElementById('ctxPath').value;
+  try {
+    const r = await fetch('/v1/context/list', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path, recursive: true, maxDepth: 2}) });
+    document.getElementById('ctxOutput').querySelector('code').textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e) { document.getElementById('ctxOutput').querySelector('code').textContent = 'Error: ' + e.message; }
+}
+async function readCtxFile() {
+  const path = document.getElementById('ctxPath').value;
+  try {
+    const r = await fetch('/v1/context/read', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path}) });
+    document.getElementById('ctxOutput').querySelector('code').textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e) { document.getElementById('ctxOutput').querySelector('code').textContent = 'Error: ' + e.message; }
+}
+
+// Parallel
+async function runParallel() {
+  try {
+    const body = JSON.parse(document.getElementById('parallelInput').value);
+    const r = await fetch('/v1/sessions/parallel', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    document.getElementById('parallelOutput').querySelector('code').textContent = JSON.stringify(await r.json(), null, 2);
+    refreshStatus();
+  } catch(e) { document.getElementById('parallelOutput').querySelector('code').textContent = 'Error: ' + e.message; }
+}
 </script>
 </body>
 </html>`;
