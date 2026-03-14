@@ -4,10 +4,12 @@ import { VsCodeClaudeAdapter } from "./adapters/vscode-claude.js";
 import { OllamaAdapter } from "./adapters/ollama.js";
 import { CONFIG } from "./config.js";
 import { classifyEffort } from "./effort.js";
+import { extractTextContent } from "./types.js";
 import type {
   AdapterOptions,
   ChatCompletionRequest,
   EffortLevel,
+  Message,
   ModelAdapter,
 } from "./types.js";
 
@@ -62,8 +64,8 @@ interface ClassificationResult {
   reason: string;
 }
 
-function classifyRequest(messages: readonly { role: string; content: string }[]): ClassificationResult {
-  const fullText = messages.map((m) => m.content).join(" ");
+function classifyRequest(messages: readonly Message[]): ClassificationResult {
+  const fullText = messages.map((m) => extractTextContent(m)).join(" ");
   const lower = fullText.toLowerCase();
   const charLen = fullText.length;
   const messageCount = messages.length;

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { Message } from "../types.js";
+import { extractTextContent } from "../types.js";
 
 /**
  * Spawn a CLI process and yield its stdout line-by-line.
@@ -91,13 +92,14 @@ export async function* spawnAndStream(
 export function formatPrompt(messages: readonly Message[]): string {
   return messages
     .map((m) => {
+      const text = extractTextContent(m);
       switch (m.role) {
         case "system":
-          return `[System]: ${m.content}`;
+          return `[System]: ${text}`;
         case "user":
-          return `[User]: ${m.content}`;
+          return `[User]: ${text}`;
         case "assistant":
-          return `[Assistant]: ${m.content}`;
+          return `[Assistant]: ${text}`;
       }
     })
     .join("\n\n");
@@ -106,7 +108,7 @@ export function formatPrompt(messages: readonly Message[]): string {
 /** Extract just the last user message content */
 export function lastUserMessage(messages: readonly Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") return messages[i].content;
+    if (messages[i].role === "user") return extractTextContent(messages[i]);
   }
-  return messages[messages.length - 1].content;
+  return extractTextContent(messages[messages.length - 1]);
 }

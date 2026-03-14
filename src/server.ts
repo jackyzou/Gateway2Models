@@ -2,7 +2,7 @@ import express from "express";
 import { CONFIG } from "./config.js";
 import { listModels, route } from "./router.js";
 import { handleNonStreaming, handleStreaming } from "./streaming.js";
-import { ChatCompletionRequestSchema } from "./types.js";
+import { ChatCompletionRequestSchema, extractTextContent } from "./types.js";
 import {
   readFileContent,
   listDirectory,
@@ -54,10 +54,35 @@ import {
   removeTool,
   ToolDefinitionSchema,
 } from "./tool-registry.js";
+import {
+  generateImages,
+  ImageGenRequestSchema,
+  transcribeAudio,
+  AudioTranscriptionSchema,
+  createVideoJob,
+  getVideoJob,
+  listVideoJobs,
+  VideoGenRequestSchema,
+} from "./generation.js";
+import {
+  loadLanPolicy,
+  getLanPolicy,
+  saveLanPolicy,
+  lanGuardMiddleware,
+  getBindAddress,
+  isLanMode,
+} from "./lan-gateway.js";
 import { z } from "zod";
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "10mb" })); // Increased for image/audio uploads
+
+// LAN gateway middleware (applies IP filtering when in LAN mode)
+if (isLanMode()) {
+  loadLanPolicy().catch(() => {});
+  app.use(lanGuardMiddleware());
+  console.log("[gateway] LAN mode enabled — binding to 0.0.0.0");
+}
 
 // Startup initialization
 loadStats().catch(() => {});
@@ -432,7 +457,7 @@ app.post("/v1/chat/completions", async (req, res) => {
         effort: routing.effort,
         reason: routing.reason,
         confidence: routing.confidence,
-        promptChars: request.messages.map((m) => m.content).join("").length,
+        promptChars: request.messages.map((m) => extractTextContent(m)).join("").length,
         responseChars: response.choices[0]?.message.content.length ?? 0,
         latencyMs: Date.now() - startTime,
         tokenEstimate: { prompt: response.usage.prompt_tokens, completion: response.usage.completion_tokens },
@@ -556,26 +581,112 @@ app.delete("/v1/cache", (_req, res) => {
   res.json({ status: "cleared" });
 });
 
+// ── Image Generation ─────────────────────────────────────────────────
+
+app.post("/v1/images/generations", async (req, res) => {
+  const parsed = ImageGenRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid request", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const result = await generateImages(parsed.data);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+// ── Audio Transcription ──────────────────────────────────────────────
+
+app.post("/v1/audio/transcriptions", async (req, res) => {
+  const parsed = AudioTranscriptionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid request", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const result = await transcribeAudio(parsed.data.audio, parsed.data.model);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+// ── Video Generation (async job queue) ───────────────────────────────
+
+app.post("/v1/video/generations", async (req, res) => {
+  const parsed = VideoGenRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid request", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const job = await createVideoJob(parsed.data);
+    res.status(202).json(job);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.get("/v1/video/generations/:id", (req, res) => {
+  const job = getVideoJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: { message: "Job not found" } });
+    return;
+  }
+  res.json(job);
+});
+
+app.get("/v1/video/generations", (_req, res) => {
+  res.json({ jobs: listVideoJobs() });
+});
+
+// ── LAN Gateway Management ──────────────────────────────────────────
+
+app.get("/v1/lan/policy", (_req, res) => {
+  res.json(getLanPolicy());
+});
+
+app.put("/v1/lan/policy", async (req, res) => {
+  try {
+    const { mode, ips } = req.body as { mode?: string; ips?: string[] };
+    const current = getLanPolicy();
+    const updated = {
+      ...current,
+      ...(mode && { mode: mode as "allow" | "deny" }),
+      ...(ips && { ips }),
+    };
+    await saveLanPolicy(updated);
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
 // ── Start server ─────────────────────────────────────────────────────
 
-app.listen(CONFIG.port, CONFIG.host, () => {
+const bindHost = getBindAddress();
+
+app.listen(CONFIG.port, bindHost, () => {
+  const lanTag = isLanMode() ? " [LAN MODE]" : "";
   console.log(`
 ╔══════════════════════════════════════════════════════════╗
-║            Gateway2Models  v3.0.0                        ║
+║            Gateway2Models  v4.0.0${lanTag.padEnd(24)}║
 ║            The Model Gateway for AI Agents               ║
 ╠══════════════════════════════════════════════════════════╣
-║  Listening on http://${CONFIG.host}:${CONFIG.port}                 ║
-║  Web UI:    http://${CONFIG.host}:${CONFIG.port}/                  ║
+║  Listening on http://${bindHost}:${CONFIG.port}${" ".repeat(Math.max(0, 21 - bindHost.length))}║
+║  Web UI:    http://${bindHost}:${CONFIG.port}/${" ".repeat(Math.max(0, 20 - bindHost.length))}║
 ║                                                          ║
-║  Backends:                                               ║
-║    • vscode-claude  (Claude Opus 4.6, 1M)                ║
-║    • agency-claude  (Agency + dynamic effort)            ║
-║    • agency-copilot (Copilot + MCP tools)                ║
-║    • ollama         (Local LLMs, offline)                ║
-║    • auto           (Smart routing)                      ║
+║  Backends:  vscode-claude, agency-claude, agency-copilot ║
+║             ollama (local), auto (smart routing)         ║
 ║                                                          ║
-║  Memory:     ~/.g2m/agents/                              ║
-║  Stats:      ~/.g2m/stats/                               ║
+║  Generation: /v1/images/generations                      ║
+║              /v1/audio/transcriptions                    ║
+║              /v1/video/generations                       ║
+║                                                          ║
+║  MCP:       node dist/mcp-server.js (stdio)              ║
+║  Memory:    ~/.g2m/agents/                               ║
 ╚══════════════════════════════════════════════════════════╝
 `);
 });

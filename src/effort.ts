@@ -1,4 +1,5 @@
 import type { EffortLevel, Message } from "./types.js";
+import { extractTextContent } from "./types.js";
 
 const LOW_KEYWORDS = [
   "quick",
@@ -52,7 +53,7 @@ const MAX_KEYWORDS = [
  *  2. Fall back to prompt length as secondary signal
  */
 export function classifyEffort(messages: readonly Message[]): EffortLevel {
-  const fullText = messages.map((m) => m.content).join(" ");
+  const fullText = messages.map((m) => extractTextContent(m)).join(" ");
   const lower = fullText.toLowerCase();
   const charLen = fullText.length;
 

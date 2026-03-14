@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Response } from "express";
 import type { ChatCompletionChunk, ChatCompletionResponse, ModelAdapter, AdapterOptions, Message } from "./types.js";
+import { extractTextContent } from "./types.js";
 
 /** Approximate token count (rough: 1 token ≈ 4 chars) */
 function estimateTokens(text: string): number {
@@ -94,7 +95,7 @@ export async function handleNonStreaming(
   }
 
   const content = parts.join("\n");
-  const promptText = messages.map((m) => m.content).join(" ");
+  const promptText = messages.map((m) => extractTextContent(m)).join(" ");
 
   return {
     id,

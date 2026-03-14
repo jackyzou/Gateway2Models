@@ -1,13 +1,20 @@
 {
   "name": "gateway2models",
-  "version": "3.0.0",
-  "description": "Local AI model gateway - OpenAI-compatible API routing to VS Code Claude, Agency Claude, and Agency Copilot",
+  "version": "4.0.0",
+  "description": "The model gateway for AI agents — multi-modal, multi-backend, persistent memory",
   "type": "module",
   "main": "dist/server.js",
+  "bin": {
+    "gateway2models": "dist/server.js",
+    "g2m": "dist/server.js",
+    "g2m-mcp": "dist/mcp-server.js"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "start:lan": "G2M_LAN=true node dist/server.js",
+    "mcp": "node dist/mcp-server.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

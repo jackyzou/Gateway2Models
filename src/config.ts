@@ -35,6 +35,17 @@ export const CONFIG = {
     model: process.env.OLLAMA_MODEL ?? "llama3.1",
   },
 
+  generation: {
+    comfyuiBaseUrl: process.env.COMFYUI_BASE_URL ?? "http://localhost:7860",
+    stabilityApiKey: process.env.STABILITY_API_KEY ?? "",
+    openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+    replicateApiToken: process.env.REPLICATE_API_TOKEN ?? "",
+  },
+
+  lan: {
+    enabled: process.env.G2M_LAN === "true" || process.argv.includes("--lan"),
+  },
+
   /** Model aliases → backend mapping */
   models: {
     "vscode-claude": "vscode-claude",

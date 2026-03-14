@@ -14,12 +14,12 @@ const cache = new Map<string, CacheEntry>();
 const DEFAULT_TTL_MS = 60_000; // 1 minute
 const MAX_CACHE_SIZE = 100;
 
-function cacheKey(model: string, messages: { role: string; content: string }[]): string {
-  const msgHash = messages.map((m) => `${m.role}:${m.content}`).join("|");
+function cacheKey(model: string, messages: { role: string; content: unknown }[]): string {
+  const msgHash = messages.map((m) => `${m.role}:${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`).join("|");
   return `${model}::${msgHash}`;
 }
 
-export function getCached(model: string, messages: { role: string; content: string }[]): unknown | null {
+export function getCached(model: string, messages: { role: string; content: unknown }[]): unknown | null {
   const key = cacheKey(model, messages);
   const entry = cache.get(key);
   if (!entry) return null;
@@ -35,7 +35,7 @@ export function getCached(model: string, messages: { role: string; content: stri
 
 export function setCache(
   model: string,
-  messages: { role: string; content: string }[],
+  messages: { role: string; content: unknown }[],
   response: unknown,
   ttlMs = DEFAULT_TTL_MS,
 ): void {
