@@ -74,7 +74,7 @@ cp .env.example .env
 
 ```bash
 npm run build
-npm start          # → http://127.0.0.1:5555
+npm start          # → http://127.0.0.1:5555 (localhost only)
 ```
 
 Or development mode with hot reload:
@@ -82,6 +82,68 @@ Or development mode with hot reload:
 ```bash
 npm run dev
 ```
+
+### 4. Start in LAN Mode (access from all devices on your WiFi)
+
+```bash
+npm run start:lan   # → http://0.0.0.0:5555 (all network interfaces)
+```
+
+Or set the env variable:
+
+```bash
+G2M_LAN=true npm start
+```
+
+Once running in LAN mode, access from any device on your network at:
+```
+http://<your-computer-ip>:5555
+```
+
+> **💡 How to find your IP:** Run `ipconfig` (Windows) or `ifconfig` (Mac/Linux) and look for your WiFi adapter's IPv4 address (e.g., `192.168.1.x` or `10.0.0.x`).
+
+#### 📌 Set a Static IP (so the address doesn't change)
+
+To keep G2M accessible at the same address every time:
+
+<details>
+<summary><b>Windows</b></summary>
+
+1. Open **Settings → Network & Internet → Wi-Fi → Hardware properties**
+2. Click **Edit** next to IP assignment
+3. Switch to **Manual**, enable **IPv4**
+4. Set:
+   - IP address: `10.0.0.139` (or your preferred address)
+   - Subnet mask: `255.255.255.0`
+   - Gateway: `10.0.0.1` (your router IP)
+   - DNS: `8.8.8.8`
+5. Save
+
+Or via PowerShell (admin):
+```powershell
+New-NetIPAddress -InterfaceAlias "Wi-Fi" -IPAddress 10.0.0.139 -PrefixLength 24 -DefaultGateway 10.0.0.1
+Set-DnsClientServerAddress -InterfaceAlias "Wi-Fi" -ServerAddresses 8.8.8.8,8.8.4.4
+```
+</details>
+
+<details>
+<summary><b>macOS</b></summary>
+
+1. Open **System Settings → Wi-Fi → Details → TCP/IP**
+2. Set **Configure IPv4** to **Manually**
+3. Enter your preferred IP, subnet `255.255.255.0`, router IP
+</details>
+
+<details>
+<summary><b>Router DHCP Reservation (recommended)</b></summary>
+
+The best approach — assign a fixed IP at the router level:
+
+1. Log into your router admin (usually `192.168.1.1` or `10.0.0.1`)
+2. Find **DHCP Reservation** or **Address Reservation**
+3. Add your computer's MAC address with the desired IP
+4. Your computer will always get the same IP from the router
+</details>
 
 ### 4. Verify
 
@@ -274,10 +336,27 @@ graph TB
 | `/v1/context/list` | POST | List directory |
 | `/v1/context/glob` | POST | Find files by extension |
 | `/v1/context/load` | POST | Bulk load context |
+| `/v1/context/discover` | POST | Auto-detect project type |
+| `/v1/context/git-diff` | POST | Git diff for a directory |
+| `/v1/context/sessions` | POST / GET | Context sessions (auto-attribution) |
+| `/v1/context/sessions/:id` | GET / PUT | Session details + messages |
+| `/v1/context/sessions/:id/messages` | POST | Append message to session |
+| `/v1/memories` | POST / GET | Save/list memories |
+| `/v1/images/generations` | POST | Image generation |
+| `/v1/audio/speech` | POST | Text-to-speech (Fish Speech) |
+| `/v1/audio/transcriptions` | POST | Audio transcription |
+| `/v1/video/generations` | POST / GET | Video generation (async jobs) |
+| `/v1/storage` | POST / GET | File storage (upload/list) |
+| `/v1/storage/:id` | GET / DELETE | Retrieve/delete stored file |
+| `/v1/storage/stats` | GET | Storage statistics |
 | `/v1/sessions/parallel` | POST | Parallel model requests |
 | `/v1/sessions` | GET | List sessions |
 | `/v1/sessions/:id` | GET | Session details |
+| `/v1/tools` | POST / GET | Register/list tools |
 | `/v1/router/stats` | GET | Routing analytics |
+| `/v1/router/policy` | GET | Routing policy |
+| `/v1/cache/stats` | GET | Cache statistics |
+| `/v1/lan/policy` | GET / PUT | LAN access policy |
 
 ---
 
@@ -300,10 +379,16 @@ See **[AGENTS.md](./AGENTS.md)** for the complete guide with SDK examples and pa
 |----------|---------|-------------|
 | `G2M_PORT` | `5555` | Server port |
 | `G2M_HOST` | `127.0.0.1` | Bind address |
+| `G2M_LAN` | `false` | Set `true` to bind to `0.0.0.0` (LAN mode) |
 | `G2M_MAX_CONCURRENCY` | `5` | Max concurrent requests |
 | `G2M_TIMEOUT_MS` | `300000` | Request timeout |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
 | `OLLAMA_MODEL` | `llama3.1` | Default Ollama model |
+| `FISH_SPEECH_URL` | `http://localhost:8080` | Fish Speech TTS server |
+| `STABILITY_API_KEY` | — | Stability AI key (image gen) |
+| `OPENAI_API_KEY` | — | OpenAI key (DALL-E, GPT) |
+| `REPLICATE_API_TOKEN` | — | Replicate token (video gen) |
+| `COMFYUI_BASE_URL` | `http://localhost:7860` | Local ComfyUI (image gen) |
 
 ---
 
