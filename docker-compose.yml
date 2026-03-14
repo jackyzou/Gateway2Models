@@ -1,0 +1,29 @@
+services:
+  g2m:
+    build: .
+    ports:
+      - "${G2M_PORT:-5555}:5555"
+    environment:
+      - G2M_PORT=5555
+      - G2M_HOST=0.0.0.0
+      - G2M_MAX_CONCURRENCY=${G2M_MAX_CONCURRENCY:-5}
+      - G2M_TIMEOUT_MS=${G2M_TIMEOUT_MS:-300000}
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+    volumes:
+      - g2m-data:/root/.g2m
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  g2m-data:
+  ollama-data:

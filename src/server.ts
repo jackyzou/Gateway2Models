@@ -38,10 +38,20 @@ import {
   buildThreadChatRequest,
   persistResponse,
 } from "./agent-intake.js";
+import {
+  loadStats,
+  startStatsPersistence,
+  recordRoute,
+  getStats,
+} from "./router-intelligence.js";
 import { z } from "zod";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
+
+// Load persisted router stats on startup
+loadStats().catch(() => {});
+startStatsPersistence();
 
 // ── Concurrency limiter ──────────────────────────────────────────────
 
@@ -68,6 +78,12 @@ app.get("/", (_req, res) => {
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", activeRequests, maxConcurrency: CONFIG.maxConcurrency });
+});
+
+// ── Router stats ─────────────────────────────────────────────────────
+
+app.get("/v1/router/stats", (_req, res) => {
+  res.json(getStats());
 });
 
 // ── List models ──────────────────────────────────────────────────────
@@ -370,6 +386,7 @@ app.post("/v1/chat/completions", async (req, res) => {
 
   try {
     const { adapter, options, routing } = route(request, ac.signal);
+    const startTime = Date.now();
 
     console.log(
       `[gateway] ${new Date().toISOString()} → ${adapter.name} | model="${request.model}" effort=${options.effort} stream=${request.stream} | ${routing.reason}`,
@@ -385,6 +402,21 @@ app.post("/v1/chat/completions", async (req, res) => {
       );
       // Attach routing metadata
       (response as unknown as Record<string, unknown>)["x-routing"] = routing;
+
+      // Record routing outcome for analytics
+      recordRoute({
+        timestamp: Date.now(),
+        model: request.model,
+        backend: routing.backend,
+        effort: routing.effort,
+        reason: routing.reason,
+        confidence: routing.confidence,
+        promptChars: request.messages.map((m) => m.content).join("").length,
+        responseChars: response.choices[0]?.message.content.length ?? 0,
+        latencyMs: Date.now() - startTime,
+        tokenEstimate: { prompt: response.usage.prompt_tokens, completion: response.usage.completion_tokens },
+      });
+
       res.json(response);
     }
   } catch (err) {
@@ -406,21 +438,21 @@ app.post("/v1/chat/completions", async (req, res) => {
 app.listen(CONFIG.port, CONFIG.host, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════════╗
-║            Gateway2Models  v2.0.0                        ║
-║            Agentware for Multi-Model Orchestration        ║
+║            Gateway2Models  v3.0.0                        ║
+║            The Model Gateway for AI Agents               ║
 ╠══════════════════════════════════════════════════════════╣
 ║  Listening on http://${CONFIG.host}:${CONFIG.port}                 ║
 ║  Web UI:    http://${CONFIG.host}:${CONFIG.port}/                  ║
 ║                                                          ║
-║  Core Endpoints:                                         ║
-║    POST /v1/chat/completions    (OpenAI-compatible)       ║
-║    POST /v1/agents/intake       (Agent registration)      ║
-║    POST /v1/agents/chat         (Thread-aware chat)       ║
-║    POST /v1/context/load        (File context loading)    ║
-║    POST /v1/sessions/parallel   (Fan-out execution)       ║
-║    GET  /v1/models              (List models)             ║
+║  Backends:                                               ║
+║    • vscode-claude  (Claude Opus 4.6, 1M)                ║
+║    • agency-claude  (Agency + dynamic effort)            ║
+║    • agency-copilot (Copilot + MCP tools)                ║
+║    • ollama         (Local LLMs, offline)                ║
+║    • auto           (Smart routing)                      ║
 ║                                                          ║
-║  Memory:  ~/.g2m/agents/                                 ║
+║  Memory:     ~/.g2m/agents/                              ║
+║  Stats:      ~/.g2m/stats/                               ║
 ╚══════════════════════════════════════════════════════════╝
 `);
 });

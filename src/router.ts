@@ -1,6 +1,7 @@
 import { AgencyClaudeAdapter } from "./adapters/agency-claude.js";
 import { AgencyCopilotAdapter } from "./adapters/agency-copilot.js";
 import { VsCodeClaudeAdapter } from "./adapters/vscode-claude.js";
+import { OllamaAdapter } from "./adapters/ollama.js";
 import { CONFIG } from "./config.js";
 import { classifyEffort } from "./effort.js";
 import type {
@@ -16,6 +17,7 @@ const adapters: Record<string, ModelAdapter> = {
   "vscode-claude": new VsCodeClaudeAdapter(),
   "agency-claude": new AgencyClaudeAdapter(),
   "agency-copilot": new AgencyCopilotAdapter(),
+  "ollama": new OllamaAdapter(),
 };
 
 // ── Smart content classification ─────────────────────────────────────
@@ -195,6 +197,7 @@ export function listModels(): { id: string; backend: string; description: string
     "vscode-claude": "Claude Opus 4.6 (1M) via VS Code CLI — fast, general-purpose",
     "agency-claude": "Claude Opus 4.6 (1M) via Agency — dynamic effort, complex tasks",
     "agency-copilot": "Agency Copilot — Microsoft ecosystem (ADO, WorkIQ, M365, MCP)",
+    ollama: `Ollama local models (${CONFIG.ollama.model}) — offline, private, fast`,
     auto: "Smart auto-routing based on prompt content analysis",
   };
 

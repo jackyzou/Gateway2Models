@@ -1,49 +1,99 @@
-# ⚡ Gateway2Models
+<div align="center">
 
-**Local AI model gateway — agentware for multi-model orchestration.**
+### ⚡ Gateway2Models
 
-Gateway2Models is a localhost-first agentware server that exposes an **OpenAI-compatible API** and intelligently routes requests across multiple AI backends. Built for agents, automations, and developers who need unified access to multiple AI models from a single endpoint.
+**The Model Gateway for AI Agents**
 
-```
-http://127.0.0.1:5555/v1/chat/completions
-```
+[GitHub](https://github.com/jackyzou/Gateway2Models) · [Issues](https://github.com/jackyzou/Gateway2Models/issues) · [Agent Guide](./AGENTS.md)
 
-## Why
+[![][release-shield]][release-link]
+[![][github-stars-shield]][github-stars-link]
+[![][github-issues-shield]][github-issues-link]
+[![][license-shield]][license-link]
+[![][last-commit-shield]][last-commit-link]
 
-You have multiple AI model access points — VS Code Claude CLI, Agency Claude, Agency Copilot — each with different strengths, auth mechanisms, and use cases. Instead of hardcoding which model to call, Gateway2Models provides:
+</div>
 
-- **One API** for all backends (OpenAI-compatible — works with any SDK)
-- **Smart routing** that picks the right backend based on your prompt
-- **Persistent agent memory** — agents register once, G2M remembers their skills, context, and conversation history
-- **Thread-aware chat** — conversations persist across sessions so agents pick up where they left off
-- **File context loading** from any directory on the machine
-- **Parallel sessions** to fan-out requests to multiple models simultaneously
-- **Dynamic effort** tuning for complex vs simple tasks
+---
+
+## Overview
+
+### Challenges in Agent Development
+
+When building AI agents, developers face these challenges:
+
+- **Fragmented Model Access**: Claude CLI, Agency Claude, Copilot CLI, Ollama — each requires different invocation patterns, auth, and APIs.
+- **No Unified Interface**: Every model speaks a different protocol. Switching backends means rewriting integration code.
+- **Lost Context Between Sessions**: Agents lose memory when sessions end. Conversations, skills, and preferences vanish.
+- **No Smart Routing**: Developers manually pick which model to use, instead of letting the system route to the best backend.
+- **No Cross-Project Context**: Agents can't access files outside their own workspace without manual setup.
+
+### The Gateway2Models Solution
+
+**Gateway2Models (G2M)** is an open-source **agentware gateway** designed for AI agents and developer tools.
+
+G2M provides a single `localhost:5555` endpoint that any OpenAI-compatible client can use. It intelligently routes requests, maintains persistent agent memory, and loads context from any directory on the machine.
+
+- **Unified OpenAI-Compatible API** → **Solves Fragmentation**: One endpoint for all backends — Claude, Agency, Copilot, Ollama, and more.
+- **Persistent Agent Memory** → **Enables Continuity**: Agents register once with skills, goals, and workspace. G2M remembers everything across sessions in `~/.g2m/agents/`.
+- **Smart Score-Based Routing** → **Picks the Right Model**: Prompt analysis scores MSFT keywords, task complexity, and code signals to auto-select the best backend.
+- **Cross-Directory File Access** → **Provides Full Context**: Load files from any directory on the machine to enrich prompts with real project context.
+- **Parallel Session Execution** → **Fan-Out Analysis**: Run the same prompt against multiple models simultaneously and compare results.
+- **Dynamic Effort Control** → **Optimizes Cost**: Auto-classify prompt complexity into low/medium/high/max effort levels.
+- **Local Model Support** → **Works Offline**: Ollama integration for local LLM inference when internet isn't available.
+
+---
 
 ## Quick Start
 
+### Prerequisites
+
+- **Node.js** v20+ and **npm** v9+
+- At least one AI backend:
+  - Claude CLI (`claude.exe`) — via Anthropic
+  - Agency CLI (`agency.exe`) — via Microsoft
+  - Copilot CLI (`copilot.exe`) — via GitHub
+  - [Ollama](https://ollama.com/) — for local models
+
+### 1. Installation
+
 ```bash
+git clone https://github.com/jackyzou/Gateway2Models.git
+cd Gateway2Models
 npm install
-npm run build
-npm start          # http://127.0.0.1:5555
-# or
-npm run dev        # development with hot reload
 ```
 
-Open **http://localhost:5555** for the web UI, or point any OpenAI-compatible client at `http://localhost:5555/v1`.
+### 2. Configuration
 
-## Backends
+```bash
+cp .env.example .env
+# Edit .env to configure CLI paths and Ollama URL
+```
 
-| Model ID | Backend | Model | Best For |
-|----------|---------|-------|----------|
-| `vscode-claude` | Claude CLI | Opus 4.6 (1M ctx) | General coding, Q&A, fast inference |
-| `agency-claude` | Agency CLI | Opus 4.6 (1M ctx) | Complex tasks, dynamic effort level |
-| `agency-copilot` | Copilot CLI | GitHub Copilot | Microsoft ecosystem (ADO, WorkIQ, M365) |
-| `auto` | Smart Router | — | **Recommended.** Auto-picks based on content |
+### 3. Build & Start
 
-## API
+```bash
+npm run build
+npm start          # → http://127.0.0.1:5555
+```
 
-### Chat Completions
+Or development mode with hot reload:
+
+```bash
+npm run dev
+```
+
+### 4. Verify
+
+```bash
+curl http://localhost:5555/health
+curl http://localhost:5555/v1/models
+```
+
+Open **http://localhost:5555** for the Web UI.
+
+### 5. Send Your First Request
+
 ```bash
 curl http://localhost:5555/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -54,38 +104,46 @@ curl http://localhost:5555/v1/chat/completions \
   }'
 ```
 
-### Load File Context (any directory)
+### 6. Register an Agent
+
 ```bash
-# Read a file
-curl http://localhost:5555/v1/context/read \
-  -H "Content-Type: application/json" \
-  -d '{"path": "C:\\Users\\project\\src\\main.ts"}'
-
-# List directory
-curl http://localhost:5555/v1/context/list \
-  -H "Content-Type: application/json" \
-  -d '{"path": "C:\\Users\\project", "recursive": true}'
-
-# Bulk load context
-curl http://localhost:5555/v1/context/load \
-  -H "Content-Type: application/json" \
-  -d '{"paths": ["C:\\Users\\project\\src", "C:\\docs\\spec.md"]}'
-```
-
-### Parallel Sessions
-```bash
-curl http://localhost:5555/v1/sessions/parallel \
+curl http://localhost:5555/v1/agents/intake \
   -H "Content-Type: application/json" \
   -d '{
-    "tasks": [
-      {"model": "vscode-claude", "messages": [{"role":"user","content":"Review this code"}]},
-      {"model": "agency-claude", "messages": [{"role":"user","content":"Find security issues"}]}
-    ],
-    "concurrency": 3
+    "agentId": "my-agent",
+    "name": "Code Assistant",
+    "skills": ["typescript", "code-review"],
+    "workspace": {"path": "/projects/myapp"},
+    "task": "Review the auth module"
   }'
 ```
 
-### Python (OpenAI SDK)
+### Docker Deployment
+
+```bash
+docker compose up
+```
+
+---
+
+## Available Backends
+
+| Model ID | Backend | Engine | Best For |
+|----------|---------|--------|----------|
+| `vscode-claude` | Claude CLI | Opus 4.6 (1M ctx) | General coding, Q&A, fast inference |
+| `agency-claude` | Agency CLI | Opus 4.6 (1M ctx) | Complex tasks, dynamic effort level |
+| `agency-copilot` | Copilot CLI | GitHub Copilot | Microsoft ecosystem (ADO, WorkIQ, M365) |
+| `ollama` | Ollama API | Local LLMs | Offline use, privacy, fast local inference |
+| `auto` | Smart Router | — | **Recommended.** Auto-picks based on content |
+
+---
+
+## Core Concepts
+
+### 1. Unified API → Solves Fragmentation
+
+One OpenAI-compatible endpoint for all backends. Any client that speaks the OpenAI API works.
+
 ```python
 from openai import OpenAI
 
@@ -99,96 +157,178 @@ for chunk in response:
     print(chunk.choices[0].delta.content or "", end="")
 ```
 
-## Smart Routing
+### 2. Persistent Agent Memory → Enables Continuity
 
-When `model: "auto"`, the gateway analyzes your prompt to pick the best backend:
+Agents register via the **Intake Protocol**. G2M persists profiles and conversations to `~/.g2m/agents/`.
+
+```
+~/.g2m/
+  agents/
+    my-code-reviewer/
+      profile.json              # Skills, goals, preferences
+      threads/
+        abc123.json             # Full conversation history + routing metadata
+```
+
+When an agent reconnects — even days later — G2M loads its full profile, previous work, and continues seamlessly.
+
+### 3. Smart Score-Based Routing → Picks the Right Model
+
+When `model: "auto"`, G2M scores the prompt across multiple signals:
 
 | Signal | Score | Routes To |
 |--------|-------|-----------|
-| MSFT keywords (Azure DevOps, WorkIQ, M365, Teams) | Strong: +3, Weak: +1 | `agency-copilot` (threshold: 2) |
-| Complex tasks (architecture, refactor, multi-file) | +2 per signal | `agency-claude` (threshold: 4) |
-| Long prompts (>1500 chars), code blocks, multi-turn | +1-3 | `agency-claude` |
-| Simple/quick tasks | -1 per signal | `vscode-claude` (default) |
+| MSFT keywords (Azure DevOps, WorkIQ, M365) | Strong: +3, Weak: +1 | `agency-copilot` (≥ 2) |
+| Complex tasks (architecture, refactor, multi-file) | +2 per signal | `agency-claude` (≥ 4) |
+| Long prompts, code blocks, multi-turn | +1–3 | `agency-claude` |
+| Quick/simple tasks | −1 per signal | `vscode-claude` (default) |
 
-Routing decisions are logged and returned in the `x-routing` response field.
+Routing metadata returned in `x-routing` response field with confidence scores.
 
-## Effort Levels
+### 4. Cross-Directory File Access → Full Context
 
-For `agency-claude`, effort is auto-classified:
+Load files from **any directory** — not just the current workspace:
 
-| Level | Prompt Signals |
-|-------|---------------|
-| **low** | Short (<100 chars), "quick", "brief", "tl;dr" |
-| **medium** | Standard (100-500 chars), general questions |
-| **high** | "analyze", "review", "debug", "detailed" (500-2000 chars) |
-| **max** | "architecture", "comprehensive", "deep dive" (>2000 chars) |
+```bash
+curl http://localhost:5555/v1/context/load \
+  -H "Content-Type: application/json" \
+  -d '{"paths": ["/projects/app-a/src", "/docs/spec.md"]}'
+```
 
-Override: `"x-effort": "max"` in request body or `x-effort: max` header.
+### 5. Parallel Sessions → Fan-Out Analysis
+
+Run the same question against multiple backends simultaneously:
+
+```bash
+curl http://localhost:5555/v1/sessions/parallel \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      {"model": "vscode-claude", "messages": [{"role":"user","content":"Review this code"}]},
+      {"model": "ollama", "messages": [{"role":"user","content":"Review this code"}]}
+    ],
+    "concurrency": 3
+  }'
+```
+
+### 6. Local Models → Works Offline
+
+Ollama integration for local inference. No internet required.
+
+```bash
+ollama serve                    # Start Ollama
+curl http://localhost:5555/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ollama", "messages": [{"role":"user","content":"Hello"}]}'
+```
+
+---
 
 ## Architecture
 
-```
-Agents/Apps ──→ Gateway2Models (localhost:5555)
-                  ├── Agent Memory (~/.g2m/agents/)
-                  │     ├── Agent profiles (skills, goals, preferences)
-                  │     ├── Conversation threads (persistent history)
-                  │     └── Context accumulation across sessions
-                  ├── Smart Router (score-based classification)
-                  │     ├── MSFT keywords → Agency Copilot (MCP tools)
-                  │     ├── Complex tasks → Agency Claude (dynamic effort)
-                  │     └── Default → VS Code Claude (fast)
-                  ├── File Context Loader (any directory access)
-                  ├── Parallel Session Manager (fan-out execution)
-                  └── Web UI (human testing at /)
+```mermaid
+graph TB
+    subgraph Agents["Agent / Application"]
+        A1[Any OpenAI-compatible client]
+    end
+
+    subgraph G2M["Gateway2Models — localhost:5555"]
+        MEM[Agent Memory — ~/.g2m/agents/]
+        RTR[Smart Router — score-based classification]
+        CTX[File Context Loader — any directory]
+        PAR[Parallel Session Manager]
+        UI[Web UI — testing dashboard]
+    end
+
+    subgraph Backends["Model Backends"]
+        VC[VS Code Claude CLI — Opus 4.6]
+        AC[Agency Claude CLI — dynamic effort]
+        CP[Agency Copilot CLI — MCP tools]
+        OL[Ollama — local LLMs]
+    end
+
+    A1 --> G2M
+    RTR --> VC
+    RTR --> AC
+    RTR --> CP
+    RTR --> OL
 ```
 
-## Endpoints
+---
+
+## All Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Web UI for testing |
+| `/` | GET | Web UI |
 | `/health` | GET | Server status |
 | `/v1/models` | GET | List models |
 | `/v1/chat/completions` | POST | Chat (OpenAI-compatible) |
-| `/v1/agents/intake` | POST | **Register agent** + create thread |
-| `/v1/agents/chat` | POST | **Thread-aware chat** with memory |
-| `/v1/agents` | GET | List all registered agents |
-| `/v1/agents/:id` | GET | Get agent profile + threads |
-| `/v1/agents/:id` | PUT | Update agent profile |
-| `/v1/agents/:id/threads` | GET | List agent's threads |
-| `/v1/agents/:agentId/threads/:threadId` | GET | Get thread with history |
-| `/v1/agents/:agentId/threads/:threadId` | PUT | Update thread metadata |
+| `/v1/agents/intake` | POST | Register agent + create thread |
+| `/v1/agents/chat` | POST | Thread-aware chat with memory |
+| `/v1/agents` | GET | List registered agents |
+| `/v1/agents/:id` | GET / PUT | Agent profile |
+| `/v1/agents/:id/threads` | GET / POST | Agent threads |
+| `/v1/agents/:agentId/threads/:threadId` | GET / PUT | Thread details |
 | `/v1/context/read` | POST | Read a file |
 | `/v1/context/list` | POST | List directory |
 | `/v1/context/glob` | POST | Find files by extension |
-| `/v1/context/load` | POST | Bulk load file context |
-| `/v1/sessions/parallel` | POST | Run parallel model requests |
+| `/v1/context/load` | POST | Bulk load context |
+| `/v1/sessions/parallel` | POST | Parallel model requests |
 | `/v1/sessions` | GET | List sessions |
-| `/v1/sessions/:id` | GET | Get session details |
+| `/v1/sessions/:id` | GET | Session details |
+| `/v1/router/stats` | GET | Routing analytics |
+
+---
 
 ## Agent Integration
 
-See [**AGENTS.md**](AGENTS.md) for the full agent integration guide with patterns, examples, and best practices.
+See **[AGENTS.md](./AGENTS.md)** for the complete guide with SDK examples and patterns.
 
-## For Agents: Key Points
+### Recommended Flow
 
-1. **Start with intake** — `/v1/agents/intake` registers your identity and creates a conversation thread
-2. **Use thread-aware chat** — `/v1/agents/chat` persists history automatically across sessions
-3. **Describe yourself** — Skills, tech stack, workspace, goals help G2M tailor routing and responses
-4. **Load context** — Include `contextPaths` in intake or chat for file-enriched prompts
-5. **Resume threads** — Pass `resumeThreadId` in intake to continue where you left off
-6. **Use `model: "auto"`** — the router picks the best backend based on your prompt
-7. **Use parallel sessions** for multi-perspective analysis
-8. **Check `x-routing`** in responses to see why a backend was chosen
+1. **Intake** → Register with G2M: describe skills, workspace, goals
+2. **Chat** → Thread-aware chat: history persists automatically
+3. **Context** → Load files from any directory to enrich prompts
+4. **Parallel** → Fan-out analysis across multiple models
+
+---
 
 ## Configuration
 
-Edit `src/config.ts`:
-- Port (default: 5555)
-- CLI paths (auto-detected for current machine)
-- Timeout (default: 5 minutes)
-- Max concurrency (default: 5)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `G2M_PORT` | `5555` | Server port |
+| `G2M_HOST` | `127.0.0.1` | Bind address |
+| `G2M_MAX_CONCURRENCY` | `5` | Max concurrent requests |
+| `G2M_TIMEOUT_MS` | `300000` | Request timeout |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
+| `OLLAMA_MODEL` | `llama3.1` | Default Ollama model |
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
 
 ## License
 
 MIT
+
+---
+
+[![Star History Chart](https://api.star-history.com/svg?repos=jackyzou/Gateway2Models&type=Date)](https://www.star-history.com/#jackyzou/Gateway2Models&Date)
+
+<!-- Link Definitions -->
+[release-shield]: https://img.shields.io/github/v/release/jackyzou/Gateway2Models?color=369eff&labelColor=black&logo=github&style=flat-square
+[release-link]: https://github.com/jackyzou/Gateway2Models/releases
+[license-shield]: https://img.shields.io/badge/license-MIT-white?labelColor=black&style=flat-square
+[license-link]: https://github.com/jackyzou/Gateway2Models/blob/master/LICENSE
+[last-commit-shield]: https://img.shields.io/github/last-commit/jackyzou/Gateway2Models?color=c4f042&labelColor=black&style=flat-square
+[last-commit-link]: https://github.com/jackyzou/Gateway2Models/commits/master
+[github-stars-shield]: https://img.shields.io/github/stars/jackyzou/Gateway2Models?labelColor=black&style=flat-square&color=ffcb47
+[github-stars-link]: https://github.com/jackyzou/Gateway2Models
+[github-issues-shield]: https://img.shields.io/github/issues/jackyzou/Gateway2Models?labelColor=black&style=flat-square&color=ff80eb
+[github-issues-link]: https://github.com/jackyzou/Gateway2Models/issues
