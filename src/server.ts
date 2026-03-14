@@ -44,14 +44,27 @@ import {
   recordRoute,
   getStats,
 } from "./router-intelligence.js";
+import { loadPolicy, getPolicy, applyPolicy } from "./routing-policy.js";
+import { getGitDiff, discoverProject } from "./context-enhanced.js";
+import { getCached, setCache, getCacheStats, clearCache, configureQueue } from "./cache-queue.js";
+import {
+  loadTools,
+  registerTool,
+  listTools,
+  removeTool,
+  ToolDefinitionSchema,
+} from "./tool-registry.js";
 import { z } from "zod";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// Load persisted router stats on startup
+// Startup initialization
 loadStats().catch(() => {});
 startStatsPersistence();
+loadPolicy().catch(() => {});
+loadTools().catch(() => {});
+configureQueue({ maxConcurrency: CONFIG.maxConcurrency });
 
 // ── Concurrency limiter ──────────────────────────────────────────────
 
@@ -395,6 +408,14 @@ app.post("/v1/chat/completions", async (req, res) => {
     if (request.stream) {
       await handleStreaming(res, adapter, request.messages, options);
     } else {
+      // Check cache for non-streaming requests
+      const cached = getCached(request.model, request.messages);
+      if (cached) {
+        console.log(`[gateway] Cache hit for ${request.model}`);
+        res.json(cached);
+        return;
+      }
+
       const response = await handleNonStreaming(
         adapter,
         request.messages,
@@ -417,6 +438,9 @@ app.post("/v1/chat/completions", async (req, res) => {
         tokenEstimate: { prompt: response.usage.prompt_tokens, completion: response.usage.completion_tokens },
       });
 
+      // Cache the response
+      setCache(request.model, request.messages, response);
+
       res.json(response);
     }
   } catch (err) {
@@ -431,6 +455,105 @@ app.post("/v1/chat/completions", async (req, res) => {
   } finally {
     releaseSlot();
   }
+});
+
+// ── Routing policy ───────────────────────────────────────────────────
+
+app.get("/v1/router/policy", (_req, res) => {
+  res.json(getPolicy());
+});
+
+app.post("/v1/router/policy/reload", async (_req, res) => {
+  try {
+    const policy = await loadPolicy();
+    res.json({ status: "reloaded", policy });
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+// ── Tool registration ────────────────────────────────────────────────
+
+app.post("/v1/tools", async (req, res) => {
+  const parsed = ToolDefinitionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid tool definition", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const tool = await registerTool(parsed.data);
+    res.json(tool);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.get("/v1/tools", (req, res) => {
+  const agentId = req.query.agentId as string | undefined;
+  res.json({ tools: listTools(agentId) });
+});
+
+app.delete("/v1/tools/:name", async (req, res) => {
+  const removed = await removeTool(req.params.name);
+  if (!removed) {
+    res.status(404).json({ error: { message: "Tool not found" } });
+    return;
+  }
+  res.json({ status: "removed" });
+});
+
+// ── Context enhanced (git diff, project discovery) ───────────────────
+
+app.post("/v1/context/git-diff", async (req, res) => {
+  const schema = z.object({
+    path: z.string().min(1),
+    staged: z.boolean().default(false),
+    commits: z.number().int().min(1).max(50).default(3),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid request", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const diff = await getGitDiff(parsed.data.path, {
+      staged: parsed.data.staged,
+      commits: parsed.data.commits,
+    });
+    if (!diff) {
+      res.status(404).json({ error: { message: "Not a git repository or no changes found" } });
+      return;
+    }
+    res.json(diff);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.post("/v1/context/discover", async (req, res) => {
+  const schema = z.object({ path: z.string().min(1) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid request", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const info = await discoverProject(parsed.data.path);
+    res.json(info);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+// ── Cache management ─────────────────────────────────────────────────
+
+app.get("/v1/cache/stats", (_req, res) => {
+  res.json(getCacheStats());
+});
+
+app.delete("/v1/cache", (_req, res) => {
+  clearCache();
+  res.json({ status: "cleared" });
 });
 
 // ── Start server ─────────────────────────────────────────────────────
