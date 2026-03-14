@@ -20,6 +20,25 @@ import {
   ParallelRequestSchema,
 } from "./sessions.js";
 import { UI_HTML } from "./ui.js";
+import {
+  AgentProfileSchema,
+  registerAgent,
+  getAgent,
+  updateAgent,
+  listAgents,
+  listThreads,
+  getThread,
+  createThread,
+  updateThreadMeta,
+} from "./agent-memory.js";
+import {
+  processIntake,
+  IntakeRequestSchema,
+  ThreadChatRequestSchema,
+  buildThreadChatRequest,
+  persistResponse,
+} from "./agent-intake.js";
+import { z } from "zod";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -158,6 +177,155 @@ app.get("/v1/sessions/:id", (req, res) => {
   res.json(session);
 });
 
+// ── Agent Intake & Memory ────────────────────────────────────────────
+
+app.post("/v1/agents/intake", async (req, res) => {
+  const parsed = IntakeRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid intake request", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const result = await processIntake(parsed.data);
+    console.log(
+      `[gateway] Agent intake: ${result.agent.name} (${result.agent.agentId}) | returning=${result.isReturning} | thread=${result.threadId} | files=${result.loadedContext.files.length}`,
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.get("/v1/agents", async (_req, res) => {
+  const agents = await listAgents();
+  res.json({ agents });
+});
+
+app.get("/v1/agents/:id", async (req, res) => {
+  const agent = await getAgent(req.params.id);
+  if (!agent) { res.status(404).json({ error: { message: "Agent not found" } }); return; }
+  const threads = await listThreads(agent.agentId);
+  res.json({ agent, threads });
+});
+
+app.put("/v1/agents/:id", async (req, res) => {
+  const parsed = AgentProfileSchema.partial().safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid update", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const agent = await updateAgent(req.params.id, parsed.data);
+    res.json({ agent });
+  } catch (err) {
+    res.status(404).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.get("/v1/agents/:id/threads", async (req, res) => {
+  const state = req.query.state as "active" | "archived" | undefined;
+  const threads = await listThreads(req.params.id, state);
+  res.json({ threads });
+});
+
+app.post("/v1/agents/:id/threads", async (req, res) => {
+  const schema = z.object({ title: z.string().optional(), goal: z.string().optional(), contextPaths: z.array(z.string()).default([]) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid request", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const thread = await createThread(req.params.id, parsed.data);
+    res.json(thread);
+  } catch (err) {
+    res.status(400).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+app.get("/v1/agents/:agentId/threads/:threadId", async (req, res) => {
+  const thread = await getThread(req.params.agentId, req.params.threadId);
+  if (!thread) { res.status(404).json({ error: { message: "Thread not found" } }); return; }
+  res.json(thread);
+});
+
+app.put("/v1/agents/:agentId/threads/:threadId", async (req, res) => {
+  const schema = z.object({ title: z.string().optional(), summary: z.string().optional(), goal: z.string().optional(), state: z.enum(["active", "archived"]).optional(), contextPaths: z.array(z.string()).optional() });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid request", details: parsed.error.flatten() } });
+    return;
+  }
+  try {
+    const thread = await updateThreadMeta(req.params.agentId, req.params.threadId, parsed.data);
+    res.json(thread);
+  } catch (err) {
+    res.status(404).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+});
+
+// ── Thread-Aware Chat (agent memory + context) ───────────────────────
+
+app.post("/v1/agents/chat", async (req, res) => {
+  const parsed = ThreadChatRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { message: "Invalid request", details: parsed.error.flatten() } });
+    return;
+  }
+
+  if (!acquireSlot()) {
+    res.status(429).json({ error: { message: `Too many concurrent requests (max ${CONFIG.maxConcurrency})` } });
+    return;
+  }
+
+  const ac = new AbortController();
+  res.on("close", () => { if (!res.writableFinished) ac.abort(); });
+
+  try {
+    const { messages, model, effort, agent } = await buildThreadChatRequest(parsed.data);
+
+    const chatRequest = {
+      model,
+      messages,
+      stream: parsed.data.stream,
+      "x-effort": effort,
+    };
+
+    const { adapter, options, routing } = route(chatRequest, ac.signal);
+
+    console.log(
+      `[gateway] Agent chat: ${agent.name} (${agent.agentId}) → ${adapter.name} | thread=${parsed.data.threadId} | effort=${options.effort} | ${routing.reason}`,
+    );
+
+    if (parsed.data.stream) {
+      await handleStreaming(res, adapter, messages, options);
+      // Persist after streaming (we don't have the full content easily, skip for streaming)
+    } else {
+      const response = await handleNonStreaming(adapter, messages, options);
+      (response as unknown as Record<string, unknown>)["x-routing"] = routing;
+
+      // Persist to thread
+      const content = response.choices[0]?.message.content ?? "";
+      await persistResponse(
+        parsed.data.agentId,
+        parsed.data.threadId,
+        parsed.data.message,
+        content,
+        { backend: routing.backend, effort: routing.effort, reason: routing.reason },
+      );
+
+      res.json(response);
+    }
+  } catch (err) {
+    console.error("[gateway] Agent chat error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+    }
+  } finally {
+    releaseSlot();
+  }
+});
+
 // ── Chat completions ─────────────────────────────────────────────────
 
 app.post("/v1/chat/completions", async (req, res) => {
@@ -237,21 +405,22 @@ app.post("/v1/chat/completions", async (req, res) => {
 
 app.listen(CONFIG.port, CONFIG.host, () => {
   console.log(`
-╔══════════════════════════════════════════════════════╗
-║            Gateway2Models  v1.0.0                    ║
-╠══════════════════════════════════════════════════════╣
-║  Listening on http://${CONFIG.host}:${CONFIG.port}             ║
-║                                                      ║
-║  Endpoints:                                          ║
-║    POST /v1/chat/completions                         ║
-║    GET  /v1/models                                   ║
-║    GET  /health                                      ║
-║                                                      ║
-║  Backends:                                           ║
-║    • vscode-claude  (VS Code CLI Claude)             ║
-║    • agency-claude  (Agency Claude, dynamic effort)  ║
-║    • agency-copilot (Agency Copilot, MSFT/MCP)       ║
-║    • auto           (auto-detect backend)            ║
-╚══════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║            Gateway2Models  v2.0.0                        ║
+║            Agentware for Multi-Model Orchestration        ║
+╠══════════════════════════════════════════════════════════╣
+║  Listening on http://${CONFIG.host}:${CONFIG.port}                 ║
+║  Web UI:    http://${CONFIG.host}:${CONFIG.port}/                  ║
+║                                                          ║
+║  Core Endpoints:                                         ║
+║    POST /v1/chat/completions    (OpenAI-compatible)       ║
+║    POST /v1/agents/intake       (Agent registration)      ║
+║    POST /v1/agents/chat         (Thread-aware chat)       ║
+║    POST /v1/context/load        (File context loading)    ║
+║    POST /v1/sessions/parallel   (Fan-out execution)       ║
+║    GET  /v1/models              (List models)             ║
+║                                                          ║
+║  Memory:  ~/.g2m/agents/                                 ║
+╚══════════════════════════════════════════════════════════╝
 `);
 });

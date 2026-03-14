@@ -6,7 +6,13 @@
 
 **Base URL:** `http://127.0.0.1:5555`
 
-Gateway2Models is an OpenAI-compatible local gateway. Any tool that speaks the OpenAI API can use it by pointing `base_url` to `http://127.0.0.1:5555/v1`.
+Gateway2Models is an OpenAI-compatible local gateway with **persistent agent memory**. Agents register once, and G2M remembers their skills, context, and conversation history across sessions.
+
+The recommended flow for agents:
+1. **Intake** → Register with G2M (once), describe skills, workspace, and goals
+2. **Chat** → Use thread-aware chat to get context-enriched responses with history
+3. **Context** → Load files from any directory to enrich prompts
+4. **Parallel** → Fan-out analysis across multiple models
 
 ---
 
@@ -231,7 +237,161 @@ for task in response["tasks"]:
 
 ---
 
-## 4. SDK Integration
+## 4. Agent Intake & Persistent Memory
+
+The **Agent Intake Protocol** is what makes G2M an agentware platform. When an agent first connects, it tells G2M:
+- **Who it is** — name, skills, tech stack
+- **What it's working on** — workspace path, project description
+- **What it needs** — current task, goals, files to load
+- **How it prefers responses** — model preference, effort level, system prompt
+
+G2M remembers all of this in `~/.g2m/agents/` and uses it to enrich every subsequent request.
+
+### Step 1: Register via Intake
+
+```
+POST /v1/agents/intake
+{
+  "agentId": "my-code-reviewer",
+  "name": "Code Review Agent",
+  "description": "Reviews code for bugs, style, and security issues",
+  "skills": ["code-review", "security-analysis", "typescript"],
+  "techStack": ["TypeScript", "Node.js", "React"],
+  "workspace": {
+    "path": "C:\\Users\\dev\\myproject",
+    "description": "E-commerce platform backend",
+    "keyPaths": ["src/api/", "src/models/", "tests/"]
+  },
+  "goals": ["Find security vulnerabilities", "Improve test coverage"],
+  "task": "Review the authentication middleware for JWT validation issues",
+  "contextPaths": ["C:\\Users\\dev\\myproject\\src\\middleware\\auth.ts"],
+  "preferredModel": "agency-claude",
+  "preferredEffort": "high",
+  "systemPrompt": "You are a senior security engineer. Focus on OWASP Top 10."
+}
+```
+
+**Response includes:**
+- `agent` — The persisted agent profile
+- `threadId` — A new conversation thread ID
+- `loadedContext` — Files that were pre-loaded
+- `understanding` — G2M's structured understanding of the agent:
+  - `agentSummary` — Who the agent is
+  - `taskSummary` — What needs to be done
+  - `contextSummary` — What file context is available
+  - `recommendations` — Suggestions for better responses
+- `isReturning` — Whether this agent has connected before
+- `previousWork` — Summaries of previous conversation threads
+
+### Step 2: Chat with Thread Memory
+
+```
+POST /v1/agents/chat
+{
+  "agentId": "my-code-reviewer",
+  "threadId": "abc123",
+  "message": "Now review the password hashing in src/utils/crypto.ts",
+  "contextPaths": ["C:\\Users\\dev\\myproject\\src\\utils\\crypto.ts"]
+}
+```
+
+G2M automatically:
+1. Loads the agent's profile (skills, goals, system prompt)
+2. Loads the thread's conversation history (last 40 messages)
+3. Loads any additional file context
+4. Builds a context-enriched prompt for the model
+5. Persists the response back to the thread
+
+### Step 3: Resume Later
+
+When the agent reconnects (even from a different session):
+```
+POST /v1/agents/intake
+{
+  "agentId": "my-code-reviewer",
+  "name": "Code Review Agent", 
+  "task": "Continue the security review",
+  "resumeThreadId": "abc123"
+}
+```
+
+G2M returns `isReturning: true` with `previousWork` showing all past threads.
+
+### Agent Management Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/agents/intake` | POST | Register agent + create/resume thread |
+| `/v1/agents/chat` | POST | Thread-aware chat with memory |
+| `/v1/agents` | GET | List all registered agents |
+| `/v1/agents/:id` | GET | Get agent profile + threads |
+| `/v1/agents/:id` | PUT | Update agent profile |
+| `/v1/agents/:id/threads` | GET | List threads (?state=active) |
+| `/v1/agents/:id/threads` | POST | Create a new thread |
+| `/v1/agents/:agentId/threads/:threadId` | GET | Get thread with full history |
+| `/v1/agents/:agentId/threads/:threadId` | PUT | Update thread (summary, goal, state) |
+
+### Agent Pattern: Full Lifecycle
+
+```python
+import requests
+
+BASE = "http://localhost:5555"
+
+# 1. Register and get a thread
+intake = requests.post(f"{BASE}/v1/agents/intake", json={
+    "agentId": "my-agent",
+    "name": "My Analysis Agent",
+    "skills": ["code-analysis", "performance"],
+    "workspace": {"path": "C:\\myproject"},
+    "task": "Optimize the database queries",
+    "contextPaths": ["C:\\myproject\\src\\db"],
+}).json()
+
+thread_id = intake["threadId"]
+print(f"Thread: {thread_id}, Returning: {intake['isReturning']}")
+print(f"Recommendations: {intake['understanding']['recommendations']}")
+
+# 2. Chat with context
+resp = requests.post(f"{BASE}/v1/agents/chat", json={
+    "agentId": "my-agent",
+    "threadId": thread_id,
+    "message": "Which queries are doing full table scans?",
+}).json()
+print(resp["choices"][0]["message"]["content"])
+
+# 3. Follow-up (history is automatic)
+resp2 = requests.post(f"{BASE}/v1/agents/chat", json={
+    "agentId": "my-agent",
+    "threadId": thread_id,
+    "message": "Show me how to add an index to fix the worst one",
+    "contextPaths": ["C:\\myproject\\src\\db\\migrations"],
+}).json()
+print(resp2["choices"][0]["message"]["content"])
+
+# 4. Archive when done
+requests.put(f"{BASE}/v1/agents/my-agent/threads/{thread_id}", json={
+    "state": "archived",
+    "summary": "Identified 3 slow queries, added indexes for users and orders tables",
+})
+```
+
+### Data Storage
+
+All agent data is stored locally in `~/.g2m/agents/`:
+```
+~/.g2m/
+  agents/
+    my-agent/
+      profile.json          # Agent skills, goals, preferences
+      threads/
+        abc123.json          # Conversation with full message history
+        def456.json          # Another conversation thread
+```
+
+---
+
+## 5. SDK Integration
 
 ### Python (OpenAI SDK)
 ```python
@@ -271,26 +431,30 @@ curl http://localhost:5555/v1/chat/completions \
 
 ---
 
-## 5. Health & Discovery
+## 6. Health & Discovery
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Server status, active request count |
 | `/v1/models` | GET | List all available model aliases with descriptions |
 | `/v1/sessions` | GET | List all parallel sessions |
+| `/v1/agents` | GET | List all registered agents |
 | `/` | GET | Web UI for manual testing |
 
 ---
 
-## 6. Best Practices for Agents
+## 7. Best Practices for Agents
 
-1. **Use `model: "auto"`** unless you have a specific reason to target a backend
-2. **Load context first** via `/v1/context/load` before asking code questions
-3. **Use parallel sessions** for multi-perspective analysis (code review + security + perf)
-4. **Let effort auto-detect** — the classifier analyzes your prompt length and keywords
-5. **Stream for long responses** — set `"stream": true` to get tokens as they arrive
-6. **Check routing metadata** — the `x-routing` field tells you which backend was chosen and why
-7. **Respect concurrency limits** — the gateway returns 429 if too many concurrent requests
+1. **Always start with intake** — Call `/v1/agents/intake` first to register your identity and get a thread
+2. **Use `model: "auto"`** unless you have a specific reason to target a backend
+3. **Provide rich intake data** — The more G2M knows about your skills, workspace, and goals, the better it routes and responds
+4. **Use thread-aware chat** — `/v1/agents/chat` persists history automatically, so follow-up questions have full context
+5. **Load context first** — Include `contextPaths` in intake or chat to pre-load relevant files
+6. **Archive completed threads** — Update thread state to `"archived"` and add a summary when a task is done
+7. **Reuse your agentId** — Returning agents get their full profile and previous work history
+8. **Use parallel sessions** for multi-perspective analysis (code review + security + perf)
+9. **Check routing metadata** — the `x-routing` field tells you which backend was chosen and why
+10. **Respect concurrency limits** — the gateway returns 429 if too many concurrent requests
 
 ---
 
@@ -298,12 +462,21 @@ curl http://localhost:5555/v1/chat/completions \
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Agent / Application                   │
-│              (any OpenAI-compatible client)              │
+│              Agent / Application (any project)           │
+│     1. Intake: register skills, workspace, goals        │
+│     2. Chat:   thread-aware with persistent memory      │
 └────────────────────┬────────────────────────────────────┘
                      │ HTTP (localhost:5555)
 ┌────────────────────▼────────────────────────────────────┐
 │                   Gateway2Models                         │
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Agent Memory (~/.g2m/agents/)                     │   │
+│  │  • Agent profiles (skills, goals, preferences)    │   │
+│  │  • Conversation threads (full history + routing)  │   │
+│  │  • Context accumulation across sessions           │   │
+│  └──────────────────────────────────────────────────┘   │
+│                                                          │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │  Smart Router (score-based classification)        │   │
 │  │  • MSFT keyword scoring → Agency Copilot          │   │

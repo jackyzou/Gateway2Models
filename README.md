@@ -14,6 +14,8 @@ You have multiple AI model access points — VS Code Claude CLI, Agency Claude, 
 
 - **One API** for all backends (OpenAI-compatible — works with any SDK)
 - **Smart routing** that picks the right backend based on your prompt
+- **Persistent agent memory** — agents register once, G2M remembers their skills, context, and conversation history
+- **Thread-aware chat** — conversations persist across sessions so agents pick up where they left off
 - **File context loading** from any directory on the machine
 - **Parallel sessions** to fan-out requests to multiple models simultaneously
 - **Dynamic effort** tuning for complex vs simple tasks
@@ -127,6 +129,10 @@ Override: `"x-effort": "max"` in request body or `x-effort: max` header.
 
 ```
 Agents/Apps ──→ Gateway2Models (localhost:5555)
+                  ├── Agent Memory (~/.g2m/agents/)
+                  │     ├── Agent profiles (skills, goals, preferences)
+                  │     ├── Conversation threads (persistent history)
+                  │     └── Context accumulation across sessions
                   ├── Smart Router (score-based classification)
                   │     ├── MSFT keywords → Agency Copilot (MCP tools)
                   │     ├── Complex tasks → Agency Claude (dynamic effort)
@@ -144,6 +150,14 @@ Agents/Apps ──→ Gateway2Models (localhost:5555)
 | `/health` | GET | Server status |
 | `/v1/models` | GET | List models |
 | `/v1/chat/completions` | POST | Chat (OpenAI-compatible) |
+| `/v1/agents/intake` | POST | **Register agent** + create thread |
+| `/v1/agents/chat` | POST | **Thread-aware chat** with memory |
+| `/v1/agents` | GET | List all registered agents |
+| `/v1/agents/:id` | GET | Get agent profile + threads |
+| `/v1/agents/:id` | PUT | Update agent profile |
+| `/v1/agents/:id/threads` | GET | List agent's threads |
+| `/v1/agents/:agentId/threads/:threadId` | GET | Get thread with history |
+| `/v1/agents/:agentId/threads/:threadId` | PUT | Update thread metadata |
 | `/v1/context/read` | POST | Read a file |
 | `/v1/context/list` | POST | List directory |
 | `/v1/context/glob` | POST | Find files by extension |
@@ -158,11 +172,14 @@ See [**AGENTS.md**](AGENTS.md) for the full agent integration guide with pattern
 
 ## For Agents: Key Points
 
-1. **Use `model: "auto"`** — the router is smart, let it pick
-2. **Load context first** — `/v1/context/load` then include files in your system prompt
-3. **Use parallel sessions** for multi-perspective analysis
-4. **Stream long responses** — `"stream": true` for real-time output
-5. **Check `x-routing`** in responses to see why a backend was chosen
+1. **Start with intake** — `/v1/agents/intake` registers your identity and creates a conversation thread
+2. **Use thread-aware chat** — `/v1/agents/chat` persists history automatically across sessions
+3. **Describe yourself** — Skills, tech stack, workspace, goals help G2M tailor routing and responses
+4. **Load context** — Include `contextPaths` in intake or chat for file-enriched prompts
+5. **Resume threads** — Pass `resumeThreadId` in intake to continue where you left off
+6. **Use `model: "auto"`** — the router picks the best backend based on your prompt
+7. **Use parallel sessions** for multi-perspective analysis
+8. **Check `x-routing`** in responses to see why a backend was chosen
 
 ## Configuration
 
