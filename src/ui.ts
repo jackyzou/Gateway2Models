@@ -154,12 +154,59 @@ export const UI_HTML = `<!DOCTYPE html>
 
   <!-- Context -->
   <div class="panel" id="panel-context">
-    <div class="controls">
-      <input type="text" id="ctxPath" style="flex:1;min-width:0" placeholder="Enter path...">
-      <button onclick="listDir()">List</button>
-      <button onclick="readCtxFile()">Read</button>
+    <!-- Context Overview (auto-loaded) -->
+    <div id="ctxOverview" style="margin-bottom:16px">
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="secondary" onclick="refreshContext()" style="font-size:12px">🔄 Refresh</button>
+        <span style="color:var(--muted);font-size:12px;line-height:32px" id="ctxLastUpdate"></span>
+      </div>
+
+      <!-- Agents -->
+      <details open style="margin-bottom:8px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);padding:6px 0">🤖 Registered Agents</summary>
+        <div id="ctxAgents" style="padding:4px 0;font-size:13px;color:var(--muted)">Loading...</div>
+      </details>
+
+      <!-- Context Sessions -->
+      <details open style="margin-bottom:8px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--green);padding:6px 0">💬 Context Sessions</summary>
+        <div id="ctxSessions" style="padding:4px 0;font-size:13px;color:var(--muted)">Loading...</div>
+      </details>
+
+      <!-- Memories -->
+      <details open style="margin-bottom:8px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--yellow);padding:6px 0">🧠 Memories</summary>
+        <div id="ctxMemories" style="padding:4px 0;font-size:13px;color:var(--muted)">Loading...</div>
+      </details>
+
+      <!-- Storage -->
+      <details style="margin-bottom:8px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);padding:6px 0">📦 Storage</summary>
+        <div id="ctxStorage" style="padding:4px 0;font-size:13px;color:var(--muted)">Loading...</div>
+      </details>
+
+      <!-- Tools -->
+      <details style="margin-bottom:8px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);padding:6px 0">🔧 Registered Tools</summary>
+        <div id="ctxTools" style="padding:4px 0;font-size:13px;color:var(--muted)">Loading...</div>
+      </details>
+
+      <!-- Router Stats -->
+      <details style="margin-bottom:8px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);padding:6px 0">📊 Router Stats</summary>
+        <div id="ctxRouterStats" style="padding:4px 0;font-size:13px;color:var(--muted)">Loading...</div>
+      </details>
     </div>
-    <pre id="ctxOutput" style="margin-top:8px;min-height:200px;max-height:60vh;overflow:auto"><code>Results appear here...</code></pre>
+
+    <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:8px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">📁 File Browser</div>
+      <div class="controls">
+        <input type="text" id="ctxPath" style="flex:1;min-width:0" placeholder="Enter path...">
+        <button onclick="listDir()">List</button>
+        <button onclick="readCtxFile()">Read</button>
+      </div>
+      <pre id="ctxOutput" style="margin-top:8px;min-height:100px;max-height:40vh;overflow:auto"><code></code></pre>
+    </div>
   </div>
 
   <!-- Parallel -->
@@ -422,7 +469,117 @@ promptInput.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
-// Context
+// Context overview (auto-load persisted data)
+async function refreshContext() {
+  const el = (id) => document.getElementById(id);
+  el('ctxLastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+
+  // Agents
+  try {
+    const data = await fetch('/v1/agents').then(r => r.json());
+    const agents = data.agents || [];
+    if (agents.length === 0) {
+      el('ctxAgents').innerHTML = '<span style="color:var(--muted)">No agents registered yet.</span>';
+    } else {
+      el('ctxAgents').innerHTML = agents.map(a => {
+        const skills = (a.skills||[]).slice(0,5).map(s => '<span style="background:var(--border);padding:1px 6px;border-radius:10px;font-size:11px">' + s + '</span>').join(' ');
+        return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<strong style="color:var(--accent)">' + a.name + '</strong>' +
+          '<code style="font-size:11px;color:var(--muted)">' + a.agentId + '</code></div>' +
+          (a.description ? '<div style="font-size:12px;margin:4px 0">' + a.description + '</div>' : '') +
+          '<div style="margin-top:4px">' + skills + '</div>' +
+          (a.workspace?.path ? '<div style="font-size:11px;color:var(--muted);margin-top:4px">📁 ' + a.workspace.path + '</div>' : '') +
+          '</div>';
+      }).join('');
+    }
+  } catch { el('ctxAgents').innerHTML = '<span style="color:var(--red)">Failed to load</span>'; }
+
+  // Context Sessions
+  try {
+    const data = await fetch('/v1/context/sessions').then(r => r.json());
+    const sessions = data.sessions || [];
+    if (sessions.length === 0) {
+      el('ctxSessions').innerHTML = '<span style="color:var(--muted)">No sessions yet.</span>';
+    } else {
+      el('ctxSessions').innerHTML = sessions.map(s => {
+        const ago = Math.round((Date.now() - s.updatedAt) / 60000);
+        const agoStr = ago < 60 ? ago + 'm ago' : Math.round(ago/60) + 'h ago';
+        return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">' +
+          '<div><strong>' + s.title + '</strong>' +
+          '<div style="font-size:11px;color:var(--muted)">' + s.ownerType + ' · ' + s.messageCount + ' msgs · ' + s.state + '</div></div>' +
+          '<span style="font-size:11px;color:var(--muted)">' + agoStr + '</span></div>';
+      }).join('');
+    }
+  } catch { el('ctxSessions').innerHTML = '<span style="color:var(--red)">Failed to load</span>'; }
+
+  // Memories
+  try {
+    const data = await fetch('/v1/memories').then(r => r.json());
+    const memories = data.memories || [];
+    if (memories.length === 0) {
+      el('ctxMemories').innerHTML = '<span style="color:var(--muted)">No memories saved yet.</span>';
+    } else {
+      el('ctxMemories').innerHTML = memories.map(m => {
+        const catColors = {profile:'#58a6ff',preferences:'#d29922',entities:'#3fb950',events:'#f85149',cases:'#bc8cff',patterns:'#79c0ff'};
+        return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px">' +
+          '<span style="background:' + (catColors[m.category]||'var(--muted)') + '22;color:' + (catColors[m.category]||'var(--muted)') + ';padding:1px 8px;border-radius:10px;font-size:11px;font-weight:500">' + m.category + '</span> ' +
+          '<span style="font-size:11px;color:var(--muted)">' + m.scope + '</span>' +
+          '<div style="margin-top:4px;font-size:13px">' + m.content + '</div></div>';
+      }).join('');
+    }
+  } catch { el('ctxMemories').innerHTML = '<span style="color:var(--red)">Failed to load</span>'; }
+
+  // Storage
+  try {
+    const data = await fetch('/v1/storage/stats').then(r => r.json());
+    const files = await fetch('/v1/storage?limit=10').then(r => r.json());
+    el('ctxStorage').innerHTML =
+      '<div style="font-size:12px;margin-bottom:6px">Total: <strong>' + data.totalFiles + '</strong> files · <strong>' + (data.totalSize/1024).toFixed(1) + ' KB</strong></div>' +
+      Object.entries(data.byCategory).filter(([,v]) => v.count > 0).map(([k,v]) =>
+        '<span style="margin-right:8px">' + ({image:'🖼️',audio:'🎵',video:'🎬',document:'📄',other:'📎'}[k]||'📎') + ' ' + k + ': ' + v.count + '</span>'
+      ).join('') +
+      ((files.files||[]).length > 0 ? '<div style="margin-top:6px">' + files.files.map(f =>
+        '<div style="font-size:12px;color:var(--muted)">· ' + f.filename + ' (' + (f.size/1024).toFixed(1) + 'KB) <a href="' + f.url + '" target="_blank" style="color:var(--accent)">view</a></div>'
+      ).join('') + '</div>' : '');
+  } catch { el('ctxStorage').innerHTML = '<span style="color:var(--red)">Failed to load</span>'; }
+
+  // Tools
+  try {
+    const data = await fetch('/v1/tools').then(r => r.json());
+    const tools = data.tools || [];
+    if (tools.length === 0) {
+      el('ctxTools').innerHTML = '<span style="color:var(--muted)">No tools registered.</span>';
+    } else {
+      el('ctxTools').innerHTML = tools.map(t =>
+        '<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px">' +
+        '<strong style="color:var(--accent)">' + t.name + '</strong> <span style="font-size:11px;color:var(--muted)">by ' + t.registeredBy + '</span>' +
+        '<div style="font-size:12px;margin-top:2px">' + t.description + '</div></div>'
+      ).join('');
+    }
+  } catch { el('ctxTools').innerHTML = '<span style="color:var(--red)">Failed to load</span>'; }
+
+  // Router Stats
+  try {
+    const s = await fetch('/v1/router/stats').then(r => r.json());
+    const backends = Object.entries(s.byBackend || {});
+    el('ctxRouterStats').innerHTML =
+      '<div style="font-size:12px;margin-bottom:4px">Total: <strong>' + s.totalRequests + '</strong> requests · Cost: <strong>$' + (s.totalEstimatedCost||0).toFixed(4) + '</strong></div>' +
+      (backends.length > 0 ? backends.map(([k,v]) =>
+        '<div style="font-size:12px;color:var(--muted)">· ' + k + ': ' + v.totalRequests + ' reqs, avg ' + Math.round(v.avgLatencyMs) + 'ms</div>'
+      ).join('') : '<span style="color:var(--muted)">No requests yet.</span>');
+  } catch { el('ctxRouterStats').innerHTML = '<span style="color:var(--red)">Failed to load</span>'; }
+}
+
+// Load context on first visit to tab
+let ctxLoaded = false;
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    if (tab.dataset.tab === 'context' && !ctxLoaded) { ctxLoaded = true; refreshContext(); }
+  });
+});
+
+// File browser
 async function listDir() {
   const path = document.getElementById('ctxPath').value;
   try {
