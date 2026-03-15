@@ -140,6 +140,14 @@ export const UI_HTML = `<!DOCTYPE html>
       <select id="effortSelect"><option value="">effort: auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select>
       <button class="secondary" onclick="clearChat()" style="margin-left:auto">Clear</button>
     </div>
+    <!-- Session switcher -->
+    <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
+      <select id="sessionSelect" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px">
+        <option value="">Loading sessions...</option>
+      </select>
+      <button class="secondary" onclick="newSession()" style="font-size:12px;padding:5px 10px">+ New</button>
+      <span id="sessionStatus" style="font-size:11px;color:var(--muted)"></span>
+    </div>
     <div class="chat-box" id="chatBox"></div>
     <div class="attachments" id="attachments"></div>
     <div class="input-area">
@@ -367,6 +375,132 @@ function renderMd(text) {
   return h;
 }
 
+// ── Push Notifications ──
+let notifPermission = Notification.permission;
+async function requestNotifPermission() {
+  if ('Notification' in window && notifPermission !== 'granted') {
+    notifPermission = await Notification.requestPermission();
+  }
+}
+requestNotifPermission();
+
+function sendNotification(title, body) {
+  if (notifPermission !== 'granted') return;
+  try {
+    const n = new Notification(title, {
+      body: body.slice(0, 200),
+      icon: '⚡',
+      tag: 'g2m-response',
+      renotify: true,
+      requireInteraction: false,
+    });
+    // Vibrate on mobile if supported
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch {}
+}
+
+// ── Session Management (per-IP persistence) ──
+let currentSessionId = null;
+const sessionSelect = document.getElementById('sessionSelect');
+
+async function loadSessions() {
+  try {
+    const data = await fetch('/v1/context/sessions').then(r => r.json());
+    const sessions = (data.sessions || []).filter(s => s.ownerType === 'device');
+    sessionSelect.innerHTML = '';
+    if (sessions.length === 0) {
+      sessionSelect.innerHTML = '<option value="">No sessions yet</option>';
+    } else {
+      sessions.forEach(s => {
+        const ago = Math.round((Date.now() - s.updatedAt) / 60000);
+        const agoStr = ago < 60 ? ago + 'm' : Math.round(ago/60) + 'h';
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.title + ' (' + s.messageCount + ' msgs, ' + agoStr + ' ago)';
+        sessionSelect.appendChild(opt);
+      });
+    }
+    // Auto-select current or most recent
+    if (currentSessionId && [...sessionSelect.options].some(o => o.value === currentSessionId)) {
+      sessionSelect.value = currentSessionId;
+    } else if (sessions.length > 0) {
+      currentSessionId = sessions[0].id;
+      sessionSelect.value = currentSessionId;
+      await loadSessionMessages(currentSessionId);
+    }
+    updateSessionStatus();
+  } catch { sessionSelect.innerHTML = '<option value="">Error loading</option>'; }
+}
+
+async function loadSessionMessages(sid) {
+  if (!sid) return;
+  chatBox.innerHTML = '';
+  chatHistory.length = 0;
+  try {
+    const data = await fetch('/v1/context/sessions/' + sid).then(r => r.json());
+    const msgs = data.messages || [];
+    msgs.forEach(m => {
+      chatHistory.push({ role: m.role, content: m.content });
+      addMsg(m.role, m.content);
+    });
+    updateSessionStatus();
+  } catch {}
+}
+
+sessionSelect.addEventListener('change', () => {
+  currentSessionId = sessionSelect.value;
+  if (currentSessionId) loadSessionMessages(currentSessionId);
+});
+
+async function newSession() {
+  try {
+    const data = await fetch('/v1/context/sessions', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({}),
+    }).then(r => r.json());
+    currentSessionId = data.id;
+    chatBox.innerHTML = '';
+    chatHistory.length = 0;
+    await loadSessions();
+    updateSessionStatus();
+  } catch {}
+}
+
+async function ensureSession() {
+  if (currentSessionId) return;
+  try {
+    const data = await fetch('/v1/context/sessions', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({}),
+    }).then(r => r.json());
+    currentSessionId = data.id;
+    await loadSessions();
+  } catch {}
+}
+
+function updateSessionStatus() {
+  const el = document.getElementById('sessionStatus');
+  if (currentSessionId) {
+    el.textContent = '📌 ' + currentSessionId.slice(0, 8) + ' · ' + chatHistory.length + ' msgs';
+  } else {
+    el.textContent = '';
+  }
+}
+
+async function persistMessage(role, content, model) {
+  if (!currentSessionId) return;
+  try {
+    await fetch('/v1/context/sessions/' + currentSessionId + '/messages', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ role, content: typeof content === 'string' ? content : JSON.stringify(content), model }),
+    });
+  } catch {}
+}
+
+// Load sessions on page load
+loadSessions();
+
 // Chat
 const chatBox = document.getElementById('chatBox');
 const chatHistory = [];
@@ -382,13 +516,14 @@ function addMsg(role, content, isHtml) {
 }
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function clearChat() { chatBox.innerHTML = ''; chatHistory.length = 0; pendingFiles.length = 0; renderAttachments(); }
+function clearChat() { chatBox.innerHTML = ''; chatHistory.length = 0; pendingFiles.length = 0; renderAttachments(); newSession(); }
 
 async function sendMessage() {
   const text = promptInput.value.trim();
   if (!text && pendingFiles.length === 0) return;
   promptInput.value = '';
   promptInput.style.height = 'auto';
+  await ensureSession();
 
   // Build content parts (multi-modal)
   let content;
@@ -418,6 +553,7 @@ async function sendMessage() {
 
   chatHistory.push({ role: 'user', content });
   addMsg('user', displayHtml, true);
+  persistMessage('user', content);
 
   const model = document.getElementById('modelSelect').value;
   const stream = document.getElementById('streamCheck').checked;
@@ -450,6 +586,9 @@ async function sendMessage() {
     } catch(e) { full = '[Error: ' + e.message + ']'; }
     div.innerHTML = '<div class="msg-label">Assistant</div>' + renderMd(full);
     chatHistory.push({ role: 'assistant', content: full });
+    persistMessage('assistant', full, model);
+    sendNotification('G2M — Response Ready', full);
+    updateSessionStatus();
   } else {
     addMsg('system', 'Processing...');
     try {
@@ -459,10 +598,13 @@ async function sendMessage() {
       const c = j.choices?.[0]?.message?.content || j.error?.message || 'No response';
       addMsg('assistant', c);
       chatHistory.push({ role: 'assistant', content: c });
+      persistMessage('assistant', c, model);
+      sendNotification('G2M — Response Ready', c);
       if (j['x-routing']) addMsg('system', j['x-routing'].reason + ' (effort: ' + j['x-routing'].effort + ')');
     } catch(e) { chatBox.lastChild.remove(); addMsg('system', 'Error: ' + e.message); }
   }
   document.getElementById('sendBtn').disabled = false;
+  updateSessionStatus();
 }
 
 promptInput.addEventListener('keydown', e => {
