@@ -502,8 +502,10 @@ async function loadSessionMessages(sid) {
   if (!sid) return;
   chatBox.innerHTML = '';
   chatHistory.length = 0;
+  sessionNamed = true; // existing session already has a name
   try {
-    const data = await fetch('/v1/context/sessions/' + sid).then(r => r.json());
+    const res = await resilientFetch('/v1/context/sessions/' + sid);
+    const data = await res.json();
     const msgs = data.messages || [];
     msgs.forEach(m => {
       chatHistory.push({ role: m.role, content: m.content });
@@ -671,42 +673,67 @@ async function sendMessage() {
   if (stream) {
     const div = document.createElement('div');
     div.className = 'msg msg-assistant';
-    div.innerHTML = '<div class="msg-label">Assistant</div><span class="loading"></span>';
+    div.innerHTML = '<div class="msg-label">Assistant</div><span class="loading"></span> <span style="font-size:11px;color:var(--muted)" id="thinkTimer">Thinking...</span>';
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
     let full = '';
+    const startT = Date.now();
+    const timerEl = div.querySelector('#thinkTimer');
+    const thinkInterval = setInterval(() => {
+      const sec = Math.round((Date.now() - startT) / 1000);
+      if (timerEl && !full) timerEl.textContent = 'Thinking... ' + sec + 's';
+    }, 1000);
     try {
       const res = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const reader = res.body.getReader();
       const dec = new TextDecoder();
+      let buf = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        for (const line of dec.decode(value).split('\\n')) {
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\\n');
+        buf = lines.pop() || '';
+        for (const line of lines) {
           if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-            try { const c = JSON.parse(line.slice(6)).choices?.[0]?.delta?.content; if (c) { full += c; div.innerHTML = '<div class="msg-label">Assistant</div>' + renderMd(full); chatBox.scrollTop = chatBox.scrollHeight; } } catch {}
+            try {
+              const c = JSON.parse(line.slice(6)).choices?.[0]?.delta?.content;
+              if (c) { full += c; div.innerHTML = '<div class="msg-label">Assistant</div>' + renderMd(full); chatBox.scrollTop = chatBox.scrollHeight; }
+            } catch {}
           }
         }
       }
-    } catch(e) { full = '[Error: ' + e.message + ']'; }
+    } catch(e) { full = full || '[Error: ' + e.message + ']'; }
+    clearInterval(thinkInterval);
     div.innerHTML = '<div class="msg-label">Assistant</div>' + renderMd(full);
     chatHistory.push({ role: 'assistant', content: full });
     persistMessage('assistant', full, model);
     sendNotification('G2M — Response Ready', full);
     updateSessionStatus();
   } else {
-    addMsg('system', 'Processing...');
+    const div = document.createElement('div');
+    div.className = 'msg msg-system';
+    const startT = Date.now();
+    div.innerHTML = '<span class="loading"></span> <span id="waitTimer">Processing...</span>';
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    const waitInterval = setInterval(() => {
+      const sec = Math.round((Date.now() - startT) / 1000);
+      const el = div.querySelector('#waitTimer');
+      if (el) el.textContent = 'Processing... ' + sec + 's';
+    }, 1000);
     try {
       const res = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const j = await res.json();
-      chatBox.lastChild.remove();
+      clearInterval(waitInterval);
+      div.remove();
       const c = j.choices?.[0]?.message?.content || j.error?.message || 'No response';
       addMsg('assistant', c);
       chatHistory.push({ role: 'assistant', content: c });
       persistMessage('assistant', c, model);
       sendNotification('G2M — Response Ready', c);
       if (j['x-routing']) addMsg('system', j['x-routing'].reason + ' (effort: ' + j['x-routing'].effort + ')');
-    } catch(e) { chatBox.lastChild.remove(); addMsg('system', 'Error: ' + e.message); }
+    } catch(e) { clearInterval(waitInterval); div.remove(); addMsg('system', 'Error: ' + e.message); }
   }
   document.getElementById('sendBtn').disabled = false;
   updateSessionStatus();
