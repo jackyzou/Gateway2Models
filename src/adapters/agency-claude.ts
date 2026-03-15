@@ -30,6 +30,8 @@ export class AgencyClaudeAdapter implements ModelAdapter {
       "text",
       "--effort",
       effort,
+      "--permission-mode",
+      "bypassPermissions",
     ];
 
     yield* spawnAndStream(CONFIG.cli.agency, args, {

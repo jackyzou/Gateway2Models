@@ -24,6 +24,8 @@ export class VsCodeClaudeAdapter implements ModelAdapter {
       "text",
       "--model",
       "opus[1m]",
+      "--permission-mode",
+      "bypassPermissions",
     ];
 
     yield* spawnAndStream(CONFIG.cli.claude, args, {

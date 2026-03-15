@@ -27,6 +27,7 @@ export class AgencyCopilotAdapter implements ModelAdapter {
       "--output-format",
       "text",
       "-s",
+      "--allow-all",
     ];
 
     yield* spawnAndStream(CONFIG.cli.copilot, args, {
