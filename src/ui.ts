@@ -432,11 +432,33 @@ function addDeviceSessionId(id) {
   if (!ids.includes(id)) { ids.unshift(id); localStorage.setItem('g2m_session_ids', JSON.stringify(ids.slice(0, 50))); }
 }
 
+// Resilient fetch — retries on failure (handles phone sleep/wake)
+async function resilientFetch(url, opts, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const r = await fetch(url, opts);
+      if (r.ok) return r;
+      if (i === retries) return r;
+    } catch (e) {
+      if (i === retries) throw e;
+      await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+}
+
+// Auto-reconnect when page becomes visible (phone wakes up)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    loadSessions().catch(() => {});
+    refreshStatus();
+  }
+});
+
 async function loadSessions() {
   try {
-    // Fetch all sessions and filter to ones this device owns (by stored IDs)
     const deviceIds = getDeviceSessionIds();
-    const data = await fetch('/v1/context/sessions').then(r => r.json());
+    const res = await resilientFetch('/v1/context/sessions');
+    const data = await res.json();
     const allSessions = data.sessions || [];
 
     // Match by stored IDs OR by device owner type
@@ -444,27 +466,24 @@ async function loadSessions() {
       deviceIds.includes(s.id) || s.ownerType === 'device'
     ).sort((a, b) => b.updatedAt - a.updatedAt);
 
-    // Store device IP from session meta
     if (mySessions.length > 0 && mySessions[0].meta?.ip) {
       localStorage.setItem('g2m_device_ip', mySessions[0].meta.ip);
     }
 
     sessionSelect.innerHTML = '';
     if (mySessions.length === 0) {
-      sessionSelect.innerHTML = '<option value="">No sessions — click + New</option>';
+      sessionSelect.innerHTML = '<option value="">No sessions — tap + New</option>';
     } else {
       mySessions.forEach(s => {
         const ago = Math.round((Date.now() - s.updatedAt) / 60000);
-        const agoStr = ago < 60 ? ago + 'm ago' : Math.round(ago / 60) + 'h ago';
+        const agoStr = ago < 60 ? ago + 'm' : Math.round(ago / 60) + 'h';
         const opt = document.createElement('option');
         opt.value = s.id;
-        const label = s.title + ' · ' + s.messageCount + ' msgs · ' + agoStr;
-        opt.textContent = label;
+        opt.textContent = s.title + ' (' + s.messageCount + ' msgs, ' + agoStr + ')';
         sessionSelect.appendChild(opt);
       });
     }
 
-    // Select current or most recent
     if (currentSessionId && [...sessionSelect.options].some(o => o.value === currentSessionId)) {
       sessionSelect.value = currentSessionId;
     } else if (mySessions.length > 0) {
@@ -474,7 +493,9 @@ async function loadSessions() {
       await loadSessionMessages(currentSessionId);
     }
     updateSessionStatus();
-  } catch { sessionSelect.innerHTML = '<option value="">Error loading</option>'; }
+  } catch {
+    sessionSelect.innerHTML = '<option value="">Offline — tap + New to retry</option>';
+  }
 }
 
 async function loadSessionMessages(sid) {
@@ -501,17 +522,18 @@ sessionSelect.addEventListener('change', () => {
 async function newSession() {
   try {
     const deviceName = getDeviceName();
-    const data = await fetch('/v1/context/sessions', {
+    const res = await resilientFetch('/v1/context/sessions', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({}),
-    }).then(r => r.json());
+    });
+    const data = await res.json();
     currentSessionId = data.id;
     localStorage.setItem('g2m_current_session', currentSessionId);
     addDeviceSessionId(data.id);
-    // Rename session to include device name
-    await fetch('/v1/context/sessions/' + data.id, {
+    // Temp name until first message provides a real name
+    await resilientFetch('/v1/context/sessions/' + data.id, {
       method: 'PUT', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ title: deviceName + ' · ' + new Date().toLocaleString() }),
+      body: JSON.stringify({ title: deviceName + ' · New chat' }),
     });
     chatBox.innerHTML = '';
     chatHistory.length = 0;
@@ -524,18 +546,38 @@ async function ensureSession() {
   if (currentSessionId) return;
   try {
     const deviceName = getDeviceName();
-    const data = await fetch('/v1/context/sessions', {
+    const res = await resilientFetch('/v1/context/sessions', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({}),
-    }).then(r => r.json());
+    });
+    const data = await res.json();
     currentSessionId = data.id;
     localStorage.setItem('g2m_current_session', currentSessionId);
     addDeviceSessionId(data.id);
-    await fetch('/v1/context/sessions/' + data.id, {
+    await resilientFetch('/v1/context/sessions/' + data.id, {
       method: 'PUT', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ title: deviceName + ' · ' + new Date().toLocaleString() }),
+      body: JSON.stringify({ title: deviceName + ' · New chat' }),
     });
     await loadSessions();
+  } catch {}
+}
+
+// Auto-name session based on first user message (short concise name)
+let sessionNamed = false;
+async function autoNameSession(text) {
+  if (sessionNamed || !currentSessionId) return;
+  if (chatHistory.filter(m => m.role === 'user').length > 1) return; // only on first msg
+  sessionNamed = true;
+  const deviceName = getDeviceName();
+  // Create concise name: first 30 chars of first message
+  const shortName = text.slice(0, 30).replace(/[\\n\\r]+/g, ' ').trim();
+  const title = deviceName + ' · ' + (shortName || 'Chat');
+  try {
+    await resilientFetch('/v1/context/sessions/' + currentSessionId, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ title }),
+    });
+    loadSessions(); // refresh dropdown
   } catch {}
 }
 
@@ -553,7 +595,7 @@ function updateSessionStatus() {
 async function persistMessage(role, content, model) {
   if (!currentSessionId) return;
   try {
-    await fetch('/v1/context/sessions/' + currentSessionId + '/messages', {
+    await resilientFetch('/v1/context/sessions/' + currentSessionId + '/messages', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ role, content: typeof content === 'string' ? content : JSON.stringify(content), model }),
     });
@@ -578,7 +620,7 @@ function addMsg(role, content, isHtml) {
 }
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function clearChat() { chatBox.innerHTML = ''; chatHistory.length = 0; pendingFiles.length = 0; renderAttachments(); newSession(); }
+function clearChat() { chatBox.innerHTML = ''; chatHistory.length = 0; pendingFiles.length = 0; renderAttachments(); sessionNamed = false; newSession(); }
 
 async function sendMessage() {
   const text = promptInput.value.trim();
@@ -616,6 +658,7 @@ async function sendMessage() {
   chatHistory.push({ role: 'user', content });
   addMsg('user', displayHtml, true);
   persistMessage('user', content);
+  autoNameSession(typeof content === 'string' ? content : 'Multi-modal chat');
 
   const model = document.getElementById('modelSelect').value;
   const stream = document.getElementById('streamCheck').checked;
