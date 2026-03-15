@@ -376,57 +376,101 @@ function renderMd(text) {
 }
 
 // ── Push Notifications ──
-let notifPermission = Notification.permission;
-async function requestNotifPermission() {
-  if ('Notification' in window && notifPermission !== 'granted') {
-    notifPermission = await Notification.requestPermission();
+let notifPermission = 'default';
+if ('Notification' in window) {
+  notifPermission = Notification.permission;
+  if (notifPermission !== 'granted' && notifPermission !== 'denied') {
+    Notification.requestPermission().then(p => { notifPermission = p; });
   }
 }
-requestNotifPermission();
 
 function sendNotification(title, body) {
   if (notifPermission !== 'granted') return;
   try {
     const n = new Notification(title, {
-      body: body.slice(0, 200),
-      icon: '⚡',
+      body: (body||'').slice(0, 200),
       tag: 'g2m-response',
       renotify: true,
-      requireInteraction: false,
     });
-    // Vibrate on mobile if supported
     if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
     n.onclick = () => { window.focus(); n.close(); };
   } catch {}
 }
 
-// ── Session Management (per-IP persistence) ──
-let currentSessionId = null;
+// ── Device Identity ──
+function getDeviceName() {
+  let name = localStorage.getItem('g2m_device_name');
+  if (name) return name;
+  // Auto-detect from user-agent
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) name = 'iPhone';
+  else if (/iPad/.test(ua)) name = 'iPad';
+  else if (/Android/.test(ua)) name = 'Android';
+  else if (/Windows/.test(ua)) name = 'Windows PC';
+  else if (/Mac/.test(ua)) name = 'Mac';
+  else if (/Linux/.test(ua)) name = 'Linux';
+  else name = 'Device';
+  localStorage.setItem('g2m_device_name', name);
+  return name;
+}
+
+function getDeviceIp() {
+  // Will be filled from server response
+  return localStorage.getItem('g2m_device_ip') || '?';
+}
+
+// ── Session Management (per device, saved in localStorage) ──
+let currentSessionId = localStorage.getItem('g2m_current_session') || null;
 const sessionSelect = document.getElementById('sessionSelect');
+
+// Get or store session IDs for this device
+function getDeviceSessionIds() {
+  try { return JSON.parse(localStorage.getItem('g2m_session_ids') || '[]'); } catch { return []; }
+}
+function addDeviceSessionId(id) {
+  const ids = getDeviceSessionIds();
+  if (!ids.includes(id)) { ids.unshift(id); localStorage.setItem('g2m_session_ids', JSON.stringify(ids.slice(0, 50))); }
+}
 
 async function loadSessions() {
   try {
+    // Fetch all sessions and filter to ones this device owns (by stored IDs)
+    const deviceIds = getDeviceSessionIds();
     const data = await fetch('/v1/context/sessions').then(r => r.json());
-    const sessions = (data.sessions || []).filter(s => s.ownerType === 'device');
+    const allSessions = data.sessions || [];
+
+    // Match by stored IDs OR by device owner type
+    const mySessions = allSessions.filter(s =>
+      deviceIds.includes(s.id) || s.ownerType === 'device'
+    ).sort((a, b) => b.updatedAt - a.updatedAt);
+
+    // Store device IP from session meta
+    if (mySessions.length > 0 && mySessions[0].meta?.ip) {
+      localStorage.setItem('g2m_device_ip', mySessions[0].meta.ip);
+    }
+
     sessionSelect.innerHTML = '';
-    if (sessions.length === 0) {
-      sessionSelect.innerHTML = '<option value="">No sessions yet</option>';
+    if (mySessions.length === 0) {
+      sessionSelect.innerHTML = '<option value="">No sessions — click + New</option>';
     } else {
-      sessions.forEach(s => {
+      mySessions.forEach(s => {
         const ago = Math.round((Date.now() - s.updatedAt) / 60000);
-        const agoStr = ago < 60 ? ago + 'm' : Math.round(ago/60) + 'h';
+        const agoStr = ago < 60 ? ago + 'm ago' : Math.round(ago / 60) + 'h ago';
         const opt = document.createElement('option');
         opt.value = s.id;
-        opt.textContent = s.title + ' (' + s.messageCount + ' msgs, ' + agoStr + ' ago)';
+        const label = s.title + ' · ' + s.messageCount + ' msgs · ' + agoStr;
+        opt.textContent = label;
         sessionSelect.appendChild(opt);
       });
     }
-    // Auto-select current or most recent
+
+    // Select current or most recent
     if (currentSessionId && [...sessionSelect.options].some(o => o.value === currentSessionId)) {
       sessionSelect.value = currentSessionId;
-    } else if (sessions.length > 0) {
-      currentSessionId = sessions[0].id;
+    } else if (mySessions.length > 0) {
+      currentSessionId = mySessions[0].id;
       sessionSelect.value = currentSessionId;
+      localStorage.setItem('g2m_current_session', currentSessionId);
       await loadSessionMessages(currentSessionId);
     }
     updateSessionStatus();
@@ -450,16 +494,25 @@ async function loadSessionMessages(sid) {
 
 sessionSelect.addEventListener('change', () => {
   currentSessionId = sessionSelect.value;
+  localStorage.setItem('g2m_current_session', currentSessionId);
   if (currentSessionId) loadSessionMessages(currentSessionId);
 });
 
 async function newSession() {
   try {
+    const deviceName = getDeviceName();
     const data = await fetch('/v1/context/sessions', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({}),
     }).then(r => r.json());
     currentSessionId = data.id;
+    localStorage.setItem('g2m_current_session', currentSessionId);
+    addDeviceSessionId(data.id);
+    // Rename session to include device name
+    await fetch('/v1/context/sessions/' + data.id, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ title: deviceName + ' · ' + new Date().toLocaleString() }),
+    });
     chatBox.innerHTML = '';
     chatHistory.length = 0;
     await loadSessions();
@@ -470,19 +523,28 @@ async function newSession() {
 async function ensureSession() {
   if (currentSessionId) return;
   try {
+    const deviceName = getDeviceName();
     const data = await fetch('/v1/context/sessions', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({}),
     }).then(r => r.json());
     currentSessionId = data.id;
+    localStorage.setItem('g2m_current_session', currentSessionId);
+    addDeviceSessionId(data.id);
+    await fetch('/v1/context/sessions/' + data.id, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ title: deviceName + ' · ' + new Date().toLocaleString() }),
+    });
     await loadSessions();
   } catch {}
 }
 
 function updateSessionStatus() {
   const el = document.getElementById('sessionStatus');
+  const deviceName = getDeviceName();
+  const ip = getDeviceIp();
   if (currentSessionId) {
-    el.textContent = '📌 ' + currentSessionId.slice(0, 8) + ' · ' + chatHistory.length + ' msgs';
+    el.textContent = '📌 ' + deviceName + ' (' + ip + ') · ' + chatHistory.length + ' msgs';
   } else {
     el.textContent = '';
   }
